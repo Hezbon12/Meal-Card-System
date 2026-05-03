@@ -1,0 +1,21 @@
+```
+# Dependencies
+node_modules/
+
+# Database files
+backend/*.sqlite
+backend/*.sqlite-shm
+backend/*.sqlite-wal
+
+<<<<<<< HEAD
+# OS generated files
+.DS_Store
+Thumbs.db
+
+*.sqlite-shm 
+*.sqlite-wal 
+=======
+# Package lock file
+backend/package-lock.json
+>>>>>>> 91db6690174c61bafce49b09020854b36a74c7fd
+```

@@ -1,0 +1,53 @@
+# Nginx config for ShuleMeal Cards
+# Place at: /etc/nginx/sites-available/shulemeal
+# Then: sudo ln -s /etc/nginx/sites-available/shulemeal /etc/nginx/sites-enabled/
+# Then: sudo certbot --nginx -d yourdomain.com
+# Then: sudo nginx -t && sudo systemctl reload nginx
+
+server {
+    listen 80;
+    server_name yourdomain.com;
+    # Redirect all HTTP to HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name yourdomain.com;
+
+    # SSL — managed by Certbot (Let's Encrypt)
+    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Security headers (helmet handles these in Node too, belt-and-suspenders)
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-Content-Type-Options "nosniff";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+
+    # Serve the built React frontend
+    root /var/www/shulemeal/dist;
+    index index.html;
+
+    # SPA routing — all non-API routes serve index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Proxy API requests to the Node backend
+    location /api/ {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+        proxy_connect_timeout 10s;
+    }
+
+    # Block access to sensitive files
+    location ~ /\. { deny all; }
+    location ~ \.(sqlite|env|log)$ { deny all; }
+}

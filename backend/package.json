@@ -1,0 +1,44 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "generate-secret": "node -e \"console.log(require('crypto').randomBytes(64).toString('hex'))\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.9.0",
+    "cors": "^2.8.6",
+    "csurf": "^1.2.2",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.3.2",
+    "express-validator": "^7.3.2",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+<<<<<<< HEAD
+    "qrcode": "^1.5.4",
+    "sqlite3": "^6.0.1"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "csurf": "^1.11.0"
+  },
+  "overrides": {
+    "csurf": {
+      "cookie": "^0.7.0"
+    }
+=======
+    "qrcode": "^1.5.4"
+>>>>>>> 91db6690174c61bafce49b09020854b36a74c7fd
+  }
+}
+}

@@ -1,0 +1,5 @@
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+WARNING: JWT_SECRET not set. Using insecure default — DO NOT use in production.
+WARNING: SUPER_ADMIN_PASSWORD not set. Using insecure default.
+Connected to SQLite: ./database.sqlite
+Backend running on http://localhost:5000
