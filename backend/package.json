@@ -24,21 +24,12 @@
     "express-validator": "^7.3.2",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
-<<<<<<< HEAD
     "qrcode": "^1.5.4",
     "sqlite3": "^6.0.1"
-  },
-  "dependencies": {
-    "express": "^4.18.2",
-    "csurf": "^1.11.0"
   },
   "overrides": {
     "csurf": {
       "cookie": "^0.7.0"
     }
-=======
-    "qrcode": "^1.5.4"
->>>>>>> 91db6690174c61bafce49b09020854b36a74c7fd
   }
-}
 }
