@@ -1659,6 +1659,187 @@ function TeacherDashboard({
   );
 }
 
+// ─── Students Tab (grouped by grade/stream) ───────────────────
+function StudentsTab({ transactions }) {
+  const [search, setSearch] = useState("");
+  const [selectedGrade, setSelectedGrade] = useState("all");
+
+  // Collect unique grades, sort them; students with no grade go under "Unassigned"
+  const gradeLabel = (g) => g || "Unassigned";
+
+  const filtered = transactions.filter((tx) => {
+    const q = search.toLowerCase();
+    return (
+      tx.studentName.toLowerCase().includes(q) ||
+      tx.adm.toLowerCase().includes(q) ||
+      (tx.grade || "").toLowerCase().includes(q)
+    );
+  });
+
+  const allGrades = [
+    ...new Set(transactions.map((tx) => gradeLabel(tx.grade))),
+  ].sort((a, b) => {
+    if (a === "Unassigned") return 1;
+    if (b === "Unassigned") return -1;
+    return a.localeCompare(b);
+  });
+
+  const gradesToShow =
+    selectedGrade === "all"
+      ? allGrades
+      : allGrades.filter((g) => g === selectedGrade);
+
+  const grouped = gradesToShow.reduce((acc, grade) => {
+    acc[grade] = filtered.filter((tx) => gradeLabel(tx.grade) === grade);
+    return acc;
+  }, {});
+
+  const today = new Date();
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* Header */}
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Users className="w-6 h-6 text-indigo-600" /> Student Database
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">
+            {transactions.length} student{transactions.length !== 1 ? "s" : ""} across {allGrades.length} class{allGrades.length !== 1 ? "es" : ""}
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3">
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or ADM…"
+              className="pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-56"
+            />
+          </div>
+          {/* Grade filter */}
+          <select
+            value={selectedGrade}
+            onChange={(e) => setSelectedGrade(e.target.value)}
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+          >
+            <option value="all">All Classes</option>
+            {allGrades.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {transactions.length === 0 ? (
+        <div className="text-center py-20 text-gray-400">
+          <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <p className="font-medium">No students logged yet.</p>
+          <p className="text-sm mt-1">Log a payment to add students to the database.</p>
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {gradesToShow.map((grade) => {
+            const students = grouped[grade];
+            if (!students || students.length === 0) return null;
+            const activeCount = students.filter(
+              (tx) => new Date(tx.dueDate) >= today
+            ).length;
+            return (
+              <div key={grade} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                {/* Grade header */}
+                <div className="bg-indigo-50 border-b border-indigo-100 px-6 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-indigo-600 text-white rounded-lg px-3 py-1 text-sm font-bold">
+                      {grade}
+                    </div>
+                    <span className="text-sm text-gray-600 font-medium">
+                      {students.length} student{students.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className="flex items-center gap-1 text-green-700 font-semibold">
+                      <CheckCircle className="w-4 h-4" /> {activeCount} active
+                    </span>
+                    <span className="flex items-center gap-1 text-red-600 font-semibold">
+                      <AlertCircle className="w-4 h-4" /> {students.length - activeCount} expired
+                    </span>
+                  </div>
+                </div>
+                {/* Students table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b border-gray-100">
+                        <th className="py-3 px-6 font-semibold">Student Name</th>
+                        <th className="py-3 px-6 font-semibold">ADM No.</th>
+                        <th className="py-3 px-6 font-semibold">Amount Paid</th>
+                        <th className="py-3 px-6 font-semibold">Paid On</th>
+                        <th className="py-3 px-6 font-semibold">Due Date</th>
+                        <th className="py-3 px-6 font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {students.map((tx) => {
+                        const isActive = new Date(tx.dueDate) >= today;
+                        const daysLeft = Math.ceil(
+                          (new Date(tx.dueDate) - today) / (1000 * 60 * 60 * 24)
+                        );
+                        return (
+                          <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50 transition">
+                            <td className="py-3 px-6 font-semibold text-gray-900">
+                              {tx.studentName}
+                            </td>
+                            <td className="py-3 px-6 text-gray-500 text-sm font-mono">
+                              {tx.adm}
+                            </td>
+                            <td className="py-3 px-6 text-gray-700 font-bold">
+                              KSh {tx.amount.toLocaleString()}
+                            </td>
+                            <td className="py-3 px-6 text-gray-500 text-sm">
+                              {tx.paidDate || "—"}
+                            </td>
+                            <td className="py-3 px-6 text-sm font-medium text-gray-700">
+                              {tx.dueDate}
+                            </td>
+                            <td className="py-3 px-6">
+                              {isActive ? (
+                                <div>
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                                    <CheckCircle className="w-3 h-3" /> ACTIVE
+                                  </span>
+                                  {daysLeft <= 7 && daysLeft >= 0 && (
+                                    <p className="text-xs text-orange-500 font-medium mt-1">
+                                      Expires in {daysLeft} day{daysLeft !== 1 ? "s" : ""}
+                                    </p>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">
+                                  <AlertCircle className="w-3 h-3" /> EXPIRED
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Meal Card Visual ─────────────────────────────────────────
 function MealCard({ tx, template, schoolName }) {
   const [qrSrc, setQrSrc] = useState(null);
@@ -2001,6 +2182,7 @@ export default function App({ superAdminMode = false }) {
     adm: "",
     amount: "",
     durationWeeks: "4",
+    grade: "",
   });
   const [previewCard, setPreviewCard] = useState(null);
   const [renewingTx, setRenewingTx] = useState(null);
@@ -2163,6 +2345,7 @@ export default function App({ superAdminMode = false }) {
       paidDate: new Date().toISOString().split("T")[0],
       dueDate: calculateDueDate(form.durationWeeks),
       status: "Active",
+      grade: form.grade || null,
     };
     const res = await api("/api/transactions", {
       method: "POST",
@@ -2177,7 +2360,7 @@ export default function App({ superAdminMode = false }) {
     // Build the full transaction object for the UI
     const saved = { ...payload, id: data.id, cardToken: data.cardToken };
     setTransactions((prev) => [saved, ...prev]);
-    setForm({ studentName: "", adm: "", amount: "", durationWeeks: "4" });
+    setForm({ studentName: "", adm: "", amount: "", durationWeeks: "4", grade: "" });
     setPreviewCard(saved);
   };
 
@@ -2394,6 +2577,7 @@ export default function App({ superAdminMode = false }) {
             <div className="flex bg-indigo-800/50 p-1 rounded-lg">
               {[
                 ["admin", <FileText className="w-4 h-4" />, "Admin Dashboard"],
+                ["students", <Users className="w-4 h-4" />, "Students"],
                 ["scanner", <Scan className="w-4 h-4" />, "Meal Scanner"],
                 ["reports", <BarChart2 className="w-4 h-4" />, "Reports"],
               ].map(([tab, icon, label]) => (
@@ -2425,6 +2609,8 @@ export default function App({ superAdminMode = false }) {
             <QRScannerTab transactions={transactions} />
           ) : activeTab === "reports" ? (
             <ReportsTab transactions={transactions} />
+          ) : activeTab === "students" ? (
+            <StudentsTab transactions={transactions} />
           ) : (
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row gap-8">
               {/* Log Payment Form */}
@@ -2460,6 +2646,19 @@ export default function App({ superAdminMode = false }) {
                         value={form.adm}
                         onChange={handleFormChange}
                         placeholder="e.g. 4501"
+                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">
+                        Class / Grade / Stream
+                      </label>
+                      <input
+                        type="text"
+                        name="grade"
+                        value={form.grade}
+                        onChange={handleFormChange}
+                        placeholder="e.g. Form 2 North, Grade 5, Class 8"
                         className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       />
                     </div>

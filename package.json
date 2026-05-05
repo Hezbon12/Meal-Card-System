@@ -10,9 +10,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "bindings": "^1.5.0",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.5.0",
+    "express-validator": "^7.3.2",
+    "helmet": "^8.1.0",
     "html5-qrcode": "^2.3.8",
+    "jsonwebtoken": "^9.0.3",
     "jspdf": "^4.2.1",
     "jsqr": "^1.4.0",
     "lucide-react": "^1.7.0",
@@ -35,6 +42,6 @@
     "globals": "^17.4.0",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.2",
-    "vite": "^8.0.1"
+    "vite": "^8.0.10"
   }
 }

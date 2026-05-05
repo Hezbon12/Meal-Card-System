@@ -247,6 +247,7 @@ const initSchema = () => {
       school_id INTEGER NOT NULL,
       studentName TEXT NOT NULL,
       adm TEXT NOT NULL,
+      grade TEXT,
       amount REAL NOT NULL,
       durationWeeks INTEGER,
       paidDate TEXT,
@@ -352,6 +353,7 @@ const initSchema = () => {
       `ALTER TABLE audit_log ADD COLUMN ipAddress TEXT`,
       `ALTER TABLE audit_log ADD COLUMN userAgent TEXT`,
       `ALTER TABLE audit_log ADD COLUMN userId TEXT`,
+      `ALTER TABLE transactions ADD COLUMN grade TEXT`,
     ];
 
     migrations.forEach((sql) => {
@@ -1269,7 +1271,7 @@ app.get(
   noCache,
   (req, res) => {
     db.all(
-      `SELECT id, studentName, adm, amount, durationWeeks, paidDate, dueDate, status, cardToken FROM transactions WHERE school_id=? ORDER BY id DESC`,
+      `SELECT id, studentName, adm, grade, amount, durationWeeks, paidDate, dueDate, status, cardToken FROM transactions WHERE school_id=? ORDER BY id DESC`,
       [req.school.schoolId],
       (err, rows) => {
         if (err)
@@ -1333,14 +1335,16 @@ app.post(
     // Sanitize text fields before storing
     const studentName = stripHtml(req.body.studentName);
     const adm = rawAdm.trim();
+    const grade = req.body.grade ? stripHtml(String(req.body.grade)).trim().slice(0, 50) : null;
     const cardToken = generateToken();
 
     db.run(
-      `INSERT INTO transactions (school_id,studentName,adm,amount,durationWeeks,paidDate,dueDate,status,cardToken) VALUES (?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO transactions (school_id,studentName,adm,grade,amount,durationWeeks,paidDate,dueDate,status,cardToken) VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [
         req.school.schoolId,
         studentName,
         adm,
+        grade,
         amount,
         durationWeeks,
         paidDate,
@@ -1361,6 +1365,7 @@ app.post(
           id: this.lastID,
           studentName,
           adm,
+          grade,
           amount,
           durationWeeks,
           paidDate,
