@@ -28,6 +28,61 @@ import {
 import { jsPDF } from "jspdf";
 import jsQR from "jsqr";
 
+// ─── Shared date helper — always compare from start of today ──
+function todayStart() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+// ─── Custom Tooltip ───────────────────────────────────────────
+function Tooltip({ text, color = "gray", children }) {
+  const colors = {
+    gray:    "bg-gray-900 text-white",
+    indigo:  "bg-indigo-600 text-white",
+    green:   "bg-green-600 text-white",
+    orange:  "bg-orange-500 text-white",
+    amber:   "bg-amber-500 text-white",
+    cyan:    "bg-cyan-500 text-white",
+    red:     "bg-red-600 text-white",
+  };
+  return (
+    <div className="relative group inline-flex">
+      {children}
+      <div
+        className={`
+          pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2
+          px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shadow-lg
+          opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0
+          transition-all duration-150 z-50
+          ${colors[color] || colors.gray}
+        `}
+      >
+        {text}
+        {/* Arrow */}
+        <span
+          className={`absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent ${
+            color === "indigo" ? "border-t-indigo-600" :
+            color === "green"  ? "border-t-green-600"  :
+            color === "orange" ? "border-t-orange-500" :
+            color === "amber"  ? "border-t-amber-500"  :
+            color === "cyan"   ? "border-t-cyan-500"   :
+            color === "red"    ? "border-t-red-600"    :
+            "border-t-gray-900"
+          }`}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Parse a YYYY-MM-DD date string as local midnight (not UTC midnight)
+function parseLocalDate(dateStr) {
+  if (!dateStr) return new Date(NaN);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d); // local midnight
+}
+
 // ─── API helper ───────────────────────────────────────────────
 function api(path, options = {}) {
   const token = localStorage.getItem("shulemeal_token");
@@ -247,15 +302,15 @@ function LoginPage({ onLogin }) {
             <label className="block text-sm font-semibold text-gray-700 mb-1">
               Sign in as
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {["admin", "teacher"].map((r) => (
+            <div className="grid grid-cols-3 gap-2">
+              {["admin", "teacher", "accountant"].map((r) => (
                 <button
                   key={r}
                   type="button"
                   onClick={() => setCreds({ ...creds, role: r })}
                   className={`py-2 rounded-lg text-sm font-bold border transition ${creds.role === r ? "bg-indigo-600 text-white border-indigo-600" : "bg-gray-50 text-gray-600 border-gray-200 hover:border-indigo-300"}`}
                 >
-                  {r === "admin" ? "🛡 Admin" : "📖 Teacher"}
+                  {r === "admin" ? "🛡 Admin" : r === "teacher" ? "📖 Teacher" : "🧾 Accountant"}
                 </button>
               ))}
             </div>
@@ -301,12 +356,14 @@ function SuperAdminPanel({ onBack }) {
     username: "",
     adminPassword: "",
     teacherPassword: "",
+    accountantPassword: "",
   });
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({
     name: "",
     adminPassword: "",
     teacherPassword: "",
+    accountantPassword: "",
   });
   const [msg, setMsg] = useState("");
 
@@ -375,7 +432,7 @@ function SuperAdminPanel({ onBack }) {
       return;
     }
     setMsg(`School "${data.name}" created successfully.`);
-    setForm({ name: "", username: "", adminPassword: "", teacherPassword: "" });
+    setForm({ name: "", username: "", adminPassword: "", teacherPassword: "", accountantPassword: "" });
     loadSchools();
   };
 
@@ -565,6 +622,20 @@ function SuperAdminPanel({ onBack }) {
                   className="w-full pl-8 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 focus:outline-none"
                 />
               </div>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-emerald-500">
+                  🧾
+                </span>
+                <input
+                  type="password"
+                  value={form.accountantPassword}
+                  onChange={(e) =>
+                    setForm({ ...form, accountantPassword: e.target.value })
+                  }
+                  placeholder="Accountant password (optional, 8+ chars, A-Z, 0-9, symbol)"
+                  className="w-full pl-8 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                />
+              </div>
               <button
                 type="submit"
                 className="sm:col-span-2 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 rounded-lg transition"
@@ -692,6 +763,18 @@ function SuperAdminPanel({ onBack }) {
                                     placeholder="📖 Teacher pwd"
                                     className="px-2 py-1 border border-gray-200 rounded text-xs w-28"
                                   />
+                                  <input
+                                    type="password"
+                                    value={editForm.accountantPassword}
+                                    onChange={(e) =>
+                                      setEditForm({
+                                        ...editForm,
+                                        accountantPassword: e.target.value,
+                                      })
+                                    }
+                                    placeholder="🧾 Accountant pwd"
+                                    className="px-2 py-1 border border-gray-200 rounded text-xs w-28"
+                                  />
                                 </div>
                                 <div className="flex gap-2 items-center">
                                   <select
@@ -751,6 +834,7 @@ function SuperAdminPanel({ onBack }) {
                                       name: s.name,
                                       adminPassword: "",
                                       teacherPassword: "",
+                                      accountantPassword: "",
                                       plan: s.plan || "trial",
                                       months: "1",
                                     });
@@ -881,6 +965,10 @@ function QRScannerTab() {
   const [scanResult, setScanResult] = useState(null);
   const [error, setError] = useState(null);
   const [scanning, setScanning] = useState(false);
+  const [mealType, setMealType] = useState("lunch");
+
+  const MEAL_LABELS = { tea: "Tea Break", lunch: "Lunch", supper: "Supper" };
+  const MEAL_ICONS  = { tea: "☕", lunch: "🍽️", supper: "🌙" };
 
   const startCamera = async () => {
     setError(null);
@@ -942,10 +1030,9 @@ function QRScannerTab() {
     try {
       const payload = JSON.parse(text);
       if (!payload.token) throw new Error("Invalid QR");
-      // Use server-side verification so scan is logged and school-scoped
       const res = await api("/api/scan", {
         method: "POST",
-        body: JSON.stringify({ token: payload.token }),
+        body: JSON.stringify({ token: payload.token, mealType }),
       });
       const data = await res.json();
       setScanResult(data);
@@ -963,6 +1050,28 @@ function QRScannerTab() {
       <h2 className="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2">
         <Scan className="text-indigo-600" /> Dining Hall Scanner
       </h2>
+
+      {/* Meal type selector — always visible */}
+      <div className="w-full mb-5">
+        <p className="text-sm font-semibold text-gray-600 mb-2 text-center">Select Meal Period</p>
+        <div className="grid grid-cols-3 gap-2">
+          {["tea", "lunch", "supper"].map((m) => (
+            <button
+              key={m}
+              onClick={() => setMealType(m)}
+              className={`flex flex-col items-center gap-1 py-3 rounded-xl border-2 font-bold text-sm transition ${
+                mealType === m
+                  ? "border-indigo-600 bg-indigo-600 text-white shadow-md"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-indigo-300"
+              }`}
+            >
+              <span className="text-xl">{MEAL_ICONS[m]}</span>
+              {MEAL_LABELS[m]}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {!scanResult && (
         <div className="w-full bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col items-center gap-4">
           <div
@@ -998,7 +1107,7 @@ function QRScannerTab() {
               onClick={startCamera}
               className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition"
             >
-              <Scan className="w-5 h-5" /> Start Camera Scanner
+              <Scan className="w-5 h-5" /> Scan for {MEAL_LABELS[mealType]}
             </button>
           ) : (
             <button
@@ -1026,8 +1135,12 @@ function QRScannerTab() {
           {scanResult.valid ? (
             <div className="flex flex-col items-center">
               <CheckCircle className="w-20 h-20 text-green-500 mb-4" />
+              <div className="mb-2 inline-flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-bold">
+                <span>{MEAL_ICONS[scanResult.mealType || mealType]}</span>
+                {MEAL_LABELS[scanResult.mealType || mealType]}
+              </div>
               <h3 className="text-2xl font-bold text-green-800 mb-2">
-                VALID MEAL
+                APPROVED
               </h3>
               <p className="text-green-700 text-lg font-semibold">
                 {scanResult.student?.studentName}
@@ -1044,6 +1157,10 @@ function QRScannerTab() {
               <div className="w-20 h-20 rounded-full bg-orange-100 flex items-center justify-center mb-4">
                 <span className="text-4xl">🚫</span>
               </div>
+              <div className="mb-2 inline-flex items-center gap-2 bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-bold">
+                <span>{MEAL_ICONS[scanResult.mealType || mealType]}</span>
+                {MEAL_LABELS[scanResult.mealType || mealType]}
+              </div>
               <h3 className="text-2xl font-bold text-orange-800 mb-2">
                 ALREADY SERVED
               </h3>
@@ -1056,11 +1173,6 @@ function QRScannerTab() {
               <p className="text-orange-600 text-sm mt-2 font-medium">
                 {scanResult.message}
               </p>
-              <div className="mt-4 bg-orange-100 border border-orange-200 rounded-lg px-4 py-2">
-                <p className="text-xs text-orange-700 font-bold uppercase tracking-wide">
-                  This student has already received a meal today
-                </p>
-              </div>
             </div>
           ) : (
             <div className="flex flex-col items-center">
@@ -1101,17 +1213,17 @@ function QRScannerTab() {
 function ReportsTab({ transactions }) {
   const [scanSummary, setScanSummary] = useState([]);
   const [detailedScans, setDetailedScans] = useState([]);
+  const [studentBreakdown, setStudentBreakdown] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState("");
   const [activePanel, setActivePanel] = useState(null);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = todayStart();
   const activeCards = transactions.filter(
-    (tx) => new Date(tx.dueDate) >= today,
+    (tx) => parseLocalDate(tx.dueDate) >= today,
   );
   const expiredCards = transactions.filter(
-    (tx) => new Date(tx.dueDate) < today,
+    (tx) => parseLocalDate(tx.dueDate) < today,
   );
   const totalCollected = transactions.reduce((s, tx) => s + tx.amount, 0);
 
@@ -1119,19 +1231,32 @@ function ReportsTab({ transactions }) {
     Promise.all([
       api("/api/scans/summary").then((r) => r.json()),
       api("/api/scans/detailed").then((r) => r.json()),
+      api("/api/scans/student-breakdown").then((r) => r.json()),
     ])
-      .then(([summary, detailed]) => {
-        setScanSummary(summary);
-        setDetailedScans(detailed);
+      .then(([summary, detailed, breakdown]) => {
+        setScanSummary(Array.isArray(summary) ? summary : []);
+        setDetailedScans(Array.isArray(detailed) ? detailed : []);
+        setStudentBreakdown(Array.isArray(breakdown) ? breakdown : []);
         if (summary.length > 0) setSelectedDate(summary[0].date);
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);
 
+  // Group scans for selected date by student, showing which meals they had
   const scansForDate = detailedScans.filter((s) =>
     s.scanDate?.startsWith(selectedDate),
   );
+  const studentScansForDate = scansForDate.reduce((acc, s) => {
+    const key = s.adm;
+    if (!acc[key]) acc[key] = { studentName: s.studentName, adm: s.adm, grade: s.grade, meals: {}, doubleDips: {} };
+    if (s.status === "APPROVED") acc[key].meals[s.mealType] = true;
+    if (s.status === "DUPLICATE") acc[key].doubleDips[s.mealType] = true;
+    // Capture student name even if only duplicate scans exist
+    if (s.studentName && !acc[key].studentName) acc[key].studentName = s.studentName;
+    return acc;
+  }, {});
+  const studentScanRows = Object.values(studentScansForDate);
 
   const panelData = {
     all: { title: "All Students", rows: transactions },
@@ -1227,14 +1352,15 @@ function ReportsTab({ transactions }) {
     };
     renderTable("All Students", transactions, [
       { label: "Name", x: 18, val: (r) => r.studentName },
-      { label: "Adm No.", x: 90, val: (r) => r.adm },
-      { label: "Due Date", x: 130, val: (r) => r.dueDate },
+      { label: "Adm No.", x: 75, val: (r) => r.adm },
+      { label: "Grade/Stream", x: 110, val: (r) => r.grade || "—" },
+      { label: "Due Date", x: 155, val: (r) => r.dueDate },
       {
         label: "Status",
-        x: 165,
-        val: (r) => (new Date(r.dueDate) >= today ? "ACTIVE" : "EXPIRED"),
+        x: 183,
+        val: (r) => (parseLocalDate(r.dueDate) >= today ? "ACTIVE" : "EXPIRED"),
         color: (r) =>
-          new Date(r.dueDate) >= today ? [22, 163, 74] : [220, 38, 38],
+          parseLocalDate(r.dueDate) >= today ? [22, 163, 74] : [220, 38, 38],
       },
     ]);
     doc.addPage();
@@ -1242,15 +1368,149 @@ function ReportsTab({ transactions }) {
     renderTable("Detailed Scan Records", detailedScans, [
       { label: "Date & Time", x: 18, val: (s) => formatScanTime(s.scanDate) },
       { label: "Student Name", x: 70, val: (s) => s.studentName || "Unknown" },
-      { label: "Adm No.", x: 135, val: (s) => s.adm || "-" },
+      { label: "Adm No.", x: 120, val: (s) => s.adm || "-" },
+      { label: "Grade/Stream", x: 148, val: (s) => s.grade || "—" },
       {
         label: "Status",
-        x: 165,
+        x: 183,
         val: (s) => s.status,
         color: (s) => (s.status === "APPROVED" ? [22, 163, 74] : [220, 38, 38]),
       },
     ]);
+    doc.addPage();
+    y = 20;
+    renderTable("Student Meal Breakdown (All Time)", studentBreakdown, [
+      { label: "Student Name", x: 18, val: (s) => s.studentName || "Unknown" },
+      { label: "Adm No.", x: 75, val: (s) => s.adm || "-" },
+      { label: "Grade/Stream", x: 110, val: (s) => s.grade || "—" },
+      { label: "Tea", x: 148, val: (s) => String(s.tea || 0), color: () => [2, 132, 199] },
+      { label: "Lunch", x: 163, val: (s) => String(s.lunch || 0), color: () => [234, 88, 12] },
+      { label: "Supper", x: 178, val: (s) => String(s.supper || 0), color: () => [79, 70, 229] },
+      { label: "Total", x: 193, val: (s) => String(s.totalMeals || 0) },
+    ]);
     doc.save("shulemeal-report.pdf");
+  };
+
+  // ── CSV helper ──────────────────────────────────────────────
+  const downloadCSV = (filename, headers, rows) => {
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+  };
+
+  // ── Per-date breakdown exports ───────────────────────────────
+  const exportDateBreakdownCSV = () => {
+    if (!selectedDate || studentScanRows.length === 0) return;
+    const headers = ["Student Name", "Adm No.", "Grade/Stream", "Tea Break", "Lunch", "Supper", "Double-dip Tea", "Double-dip Lunch", "Double-dip Supper"];
+    const rows = studentScanRows.map(s => [
+      `"${s.studentName || "Unknown"}"`, s.adm, `"${s.grade || ""}"`,
+      s.meals.tea ? "Yes" : "No", s.meals.lunch ? "Yes" : "No", s.meals.supper ? "Yes" : "No",
+      s.doubleDips.tea ? "Yes" : "No", s.doubleDips.lunch ? "Yes" : "No", s.doubleDips.supper ? "Yes" : "No",
+    ].join(","));
+    downloadCSV(`meal-breakdown-${selectedDate}.csv`, headers, rows);
+  };
+
+  const exportDateBreakdownPDF = () => {
+    if (!selectedDate || studentScanRows.length === 0) return;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    doc.setFillColor(55, 48, 163);
+    doc.rect(0, 0, 210, 22, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(13); doc.setFont("helvetica", "bold");
+    doc.text(`Meal Breakdown - ${selectedDate}`, 105, 10, { align: "center" });
+    doc.setFontSize(8); doc.setFont("helvetica", "normal");
+    doc.text(`${studentScanRows.length} students  |  Generated: ${new Date().toLocaleString()}`, 105, 18, { align: "center" });
+    let y = 30;
+    const cols = [
+      { label: "Student Name", x: 14 },
+      { label: "Adm No.", x: 70 },
+      { label: "Grade", x: 93 },
+      { label: "Tea Break", x: 124 },
+      { label: "Lunch", x: 148 },
+      { label: "Supper", x: 170 },
+    ];
+    // Header row
+    doc.setFillColor(55, 48, 163);
+    doc.rect(14, y, 182, 8, "F");
+    doc.setTextColor(255, 255, 255); doc.setFontSize(7.5); doc.setFont("helvetica", "bold");
+    cols.forEach(c => doc.text(c.label, c.x, y + 5.5));
+    y += 8;
+    studentScanRows.forEach((s, i) => {
+      if (y > 272) { doc.addPage(); y = 14; }
+      doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 248 : 255);
+      doc.rect(14, y, 182, 7, "F");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(30, 30, 30);
+      doc.text(s.studentName || "Unknown", 14, y + 5);
+      doc.text(s.adm, 70, y + 5);
+      doc.text(s.grade || "-", 93, y + 5);
+      const cell = (served, dip, x) => {
+        if (served)     { doc.setTextColor(22, 163, 74);  doc.text("Served", x, y + 5); }
+        else if (dip)   { doc.setTextColor(234, 88, 12);  doc.text("Double-dip", x, y + 5); }
+        else            { doc.setTextColor(180, 180, 180); doc.text("-", x, y + 5); }
+        doc.setTextColor(30, 30, 30);
+      };
+      cell(s.meals.tea,    s.doubleDips.tea,    124);
+      cell(s.meals.lunch,  s.doubleDips.lunch,  148);
+      cell(s.meals.supper, s.doubleDips.supper, 170);
+      y += 7;
+    });
+    doc.save(`meal-breakdown-${selectedDate}.pdf`);
+  };
+
+  // ── All-time breakdown exports ───────────────────────────────
+  const exportAllTimeCSV = () => {
+    if (studentBreakdown.length === 0) return;
+    const headers = ["Student Name", "Adm No.", "Grade/Stream", "Tea", "Lunch", "Supper", "Total Meals"];
+    const rows = studentBreakdown.map(s => [
+      `"${s.studentName}"`, s.adm, `"${s.grade || ""}"`,
+      s.tea || 0, s.lunch || 0, s.supper || 0, s.totalMeals || 0,
+    ].join(","));
+    downloadCSV("student-meal-breakdown-alltime.csv", headers, rows);
+  };
+
+  const exportAllTimePDF = () => {
+    if (studentBreakdown.length === 0) return;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    doc.setFillColor(55, 48, 163);
+    doc.rect(0, 0, 210, 22, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(13); doc.setFont("helvetica", "bold");
+    doc.text("Student Meal Breakdown - All Time", 105, 10, { align: "center" });
+    doc.setFontSize(8); doc.setFont("helvetica", "normal");
+    doc.text(`${studentBreakdown.length} students  |  Generated: ${new Date().toLocaleString()}`, 105, 18, { align: "center" });
+    let y = 30;
+    const cols = [
+      { label: "Student Name", x: 14 },
+      { label: "Adm No.", x: 72 },
+      { label: "Grade/Stream", x: 100 },
+      { label: "Tea", x: 140 },
+      { label: "Lunch", x: 157 },
+      { label: "Supper", x: 172 },
+      { label: "Total", x: 190 },
+    ];
+    doc.setFillColor(55, 48, 163);
+    doc.rect(14, y, 182, 8, "F");
+    doc.setTextColor(255, 255, 255); doc.setFontSize(7.5); doc.setFont("helvetica", "bold");
+    cols.forEach(c => doc.text(c.label, c.x, y + 5.5));
+    y += 8;
+    studentBreakdown.forEach((s, i) => {
+      if (y > 272) { doc.addPage(); y = 14; }
+      doc.setFillColor(i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 248 : 255, i % 2 === 0 ? 248 : 255);
+      doc.rect(14, y, 182, 7, "F");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+      doc.setTextColor(30, 30, 30);  doc.text(s.studentName || "-", 14, y + 5);
+      doc.text(s.adm, 72, y + 5);
+      doc.text(s.grade || "-", 100, y + 5);
+      doc.setTextColor(2, 132, 199);  doc.text(String(s.tea || 0), 140, y + 5);
+      doc.setTextColor(234, 88, 12);  doc.text(String(s.lunch || 0), 157, y + 5);
+      doc.setTextColor(79, 70, 229);  doc.text(String(s.supper || 0), 172, y + 5);
+      doc.setTextColor(30, 30, 30);   doc.text(String(s.totalMeals || 0), 190, y + 5);
+      y += 7;
+    });
+    doc.save("student-meal-breakdown-alltime.pdf");
   };
 
   const summaryCards = [
@@ -1351,6 +1611,7 @@ function ReportsTab({ transactions }) {
                 <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
                   <th className="py-3 px-6 font-semibold">Student Name</th>
                   <th className="py-3 px-6 font-semibold">Adm No.</th>
+                  <th className="py-3 px-6 font-semibold">Grade / Stream</th>
                   <th className="py-3 px-6 font-semibold">Due Date</th>
                   <th className="py-3 px-6 font-semibold">Amount Paid</th>
                 </tr>
@@ -1366,8 +1627,17 @@ function ReportsTab({ transactions }) {
                     </td>
                     <td className="py-3 px-6 text-gray-600">{tx.adm}</td>
                     <td className="py-3 px-6">
+                      {tx.grade ? (
+                        <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-indigo-50 text-indigo-700">
+                          {tx.grade}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-6">
                       <span
-                        className={`px-2 py-1 rounded text-xs font-bold ${new Date(tx.dueDate) >= today ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
+                        className={`px-2 py-1 rounded text-xs font-bold ${parseLocalDate(tx.dueDate) >= today ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
                       >
                         {tx.dueDate}
                       </span>
@@ -1394,20 +1664,17 @@ function ReportsTab({ transactions }) {
         ) : scanSummary.length === 0 ? (
           <p className="p-6 text-center text-gray-400">No scan records yet.</p>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
                 <th className="py-3 px-6 font-semibold">Date</th>
-                <th className="py-3 px-6 font-semibold">Total</th>
-                <th className="py-3 px-6 font-semibold text-green-700">
-                  Approved
-                </th>
-                <th className="py-3 px-6 font-semibold text-red-600">
-                  Rejected
-                </th>
-                <th className="py-3 px-6 font-semibold text-orange-600">
-                  Double-dips
-                </th>
+                <th className="py-3 px-6 font-semibold text-sky-600">☕ Tea</th>
+                <th className="py-3 px-6 font-semibold text-orange-600">🍽 Lunch</th>
+                <th className="py-3 px-6 font-semibold text-indigo-600">🌙 Supper</th>
+                <th className="py-3 px-6 font-semibold text-green-700">Total Approved</th>
+                <th className="py-3 px-6 font-semibold text-red-600">Rejected</th>
+                <th className="py-3 px-6 font-semibold text-orange-600">Double-dips</th>
               </tr>
             </thead>
             <tbody>
@@ -1422,78 +1689,147 @@ function ReportsTab({ transactions }) {
                   <td className="py-3 px-6 font-medium text-indigo-700 underline">
                     {row.date}
                   </td>
-                  <td className="py-3 px-6 font-bold text-gray-700">
-                    {row.total}
-                  </td>
-                  <td className="py-3 px-6 font-bold text-green-600">
-                    {row.approved}
-                  </td>
-                  <td className="py-3 px-6 font-bold text-red-500">
-                    {row.rejected}
-                  </td>
-                  <td className="py-3 px-6 font-bold text-orange-500">
-                    {row.duplicates || 0}
-                  </td>
+                  <td className="py-3 px-6 font-bold text-sky-600">{row.tea || 0}</td>
+                  <td className="py-3 px-6 font-bold text-orange-600">{row.lunch || 0}</td>
+                  <td className="py-3 px-6 font-bold text-indigo-600">{row.supper || 0}</td>
+                  <td className="py-3 px-6 font-bold text-green-600">{row.approved}</td>
+                  <td className="py-3 px-6 font-bold text-red-500">{row.rejected}</td>
+                  <td className="py-3 px-6 font-bold text-orange-500">{row.duplicates || 0}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
+
+      {/* Per-date student meal breakdown */}
       {selectedDate && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
           <div className="p-5 border-b border-gray-100 flex justify-between items-center">
             <h3 className="font-bold text-gray-800">
-              Students who ate on {selectedDate} ({scansForDate.length})
+              Meal breakdown for {selectedDate} — {studentScanRows.length} student{studentScanRows.length !== 1 ? "s" : ""}
             </h3>
-            <button
-              onClick={() => setSelectedDate("")}
-              className="text-gray-400 hover:text-gray-600"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={exportDateBreakdownCSV}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white text-xs font-bold rounded-lg transition">
+                <Download className="w-3.5 h-3.5" /> CSV
+              </button>
+              <button onClick={exportDateBreakdownPDF}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition">
+                <FileText className="w-3.5 h-3.5" /> PDF
+              </button>
+              <button onClick={() => setSelectedDate("")} className="text-gray-400 hover:text-gray-600 ml-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-          {scansForDate.length === 0 ? (
-            <p className="p-6 text-center text-gray-400">
-              No records for this date.
-            </p>
+          {studentScanRows.length === 0 ? (
+            <p className="p-6 text-center text-gray-400">No approved meals for this date.</p>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
                   <th className="py-3 px-6 font-semibold">Student Name</th>
                   <th className="py-3 px-6 font-semibold">Adm No.</th>
-                  <th className="py-3 px-6 font-semibold">Time</th>
-                  <th className="py-3 px-6 font-semibold">Status</th>
+                  <th className="py-3 px-6 font-semibold">Grade / Stream</th>
+                  <th className="py-3 px-6 font-semibold text-sky-600">☕ Tea Break</th>
+                  <th className="py-3 px-6 font-semibold text-orange-600">🍽 Lunch</th>
+                  <th className="py-3 px-6 font-semibold text-indigo-600">🌙 Supper</th>
                 </tr>
               </thead>
               <tbody>
-                {scansForDate.map((s, i) => (
-                  <tr
-                    key={i}
-                    className="border-b border-gray-100 hover:bg-gray-50"
-                  >
-                    <td className="py-3 px-6 font-medium text-gray-800">
-                      {s.studentName || "Unknown"}
-                    </td>
-                    <td className="py-3 px-6 text-gray-600">{s.adm}</td>
-                    <td className="py-3 px-6 text-gray-500 text-sm">
-                      {formatScanTime(s.scanDate)}
-                    </td>
+                {studentScanRows.map((s, i) => (
+                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="py-3 px-6 font-medium text-gray-800">{s.studentName || "Unknown"}</td>
+                    <td className="py-3 px-6 text-gray-600 font-mono text-sm">{s.adm}</td>
                     <td className="py-3 px-6">
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-bold ${s.status === "APPROVED" ? "bg-green-100 text-green-700" : s.status === "DUPLICATE" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`}
-                      >
-                        {s.status === "DUPLICATE" ? "DOUBLE-DIP" : s.status}
-                      </span>
+                      {s.grade ? (
+                        <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-indigo-50 text-indigo-700">{s.grade}</span>
+                      ) : <span className="text-xs text-gray-400">—</span>}
                     </td>
+                    {["tea", "lunch", "supper"].map((meal) => (
+                      <td key={meal} className="py-3 px-6">
+                        <div className="flex flex-col gap-1">
+                          {s.meals[meal] && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">✓ Served</span>
+                          )}
+                          {s.doubleDips[meal] && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">🚫 Double-dip</span>
+                          )}
+                          {!s.meals[meal] && !s.doubleDips[meal] && (
+                            <span className="text-xs text-gray-300">—</span>
+                          )}
+                        </div>
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
+
+      {/* All-time per-student meal breakdown */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+          <div>
+            <h3 className="font-bold text-gray-800">Student Meal Breakdown (All Time)</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Total approved meals per student across all dates</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={exportAllTimeCSV}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white text-xs font-bold rounded-lg transition">
+              <Download className="w-3.5 h-3.5" /> CSV
+            </button>
+            <button onClick={exportAllTimePDF}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition">
+              <FileText className="w-3.5 h-3.5" /> PDF
+            </button>
+          </div>
+        </div>
+        {loading ? (
+          <p className="p-6 text-center text-gray-400">Loading...</p>
+        ) : studentBreakdown.length === 0 ? (
+          <p className="p-6 text-center text-gray-400">No meal records yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
+                <th className="py-3 px-6 font-semibold">Student Name</th>
+                <th className="py-3 px-6 font-semibold">Adm No.</th>
+                <th className="py-3 px-6 font-semibold">Grade / Stream</th>
+                <th className="py-3 px-6 font-semibold text-sky-600">☕ Tea</th>
+                <th className="py-3 px-6 font-semibold text-orange-600">🍽 Lunch</th>
+                <th className="py-3 px-6 font-semibold text-indigo-600">🌙 Supper</th>
+                <th className="py-3 px-6 font-semibold text-gray-700">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {studentBreakdown.map((s, i) => (
+                <tr key={i} className={`border-b border-gray-100 hover:bg-gray-50 ${i % 2 === 0 ? "" : "bg-gray-50/40"}`}>
+                  <td className="py-3 px-6 font-medium text-gray-800">{s.studentName}</td>
+                  <td className="py-3 px-6 text-gray-600 font-mono text-sm">{s.adm}</td>
+                  <td className="py-3 px-6">
+                    {s.grade ? (
+                      <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-indigo-50 text-indigo-700">{s.grade}</span>
+                    ) : <span className="text-xs text-gray-400">—</span>}
+                  </td>
+                  <td className="py-3 px-6 font-bold text-sky-600">{s.tea || 0}</td>
+                  <td className="py-3 px-6 font-bold text-orange-600">{s.lunch || 0}</td>
+                  <td className="py-3 px-6 font-bold text-indigo-600">{s.supper || 0}</td>
+                  <td className="py-3 px-6 font-bold text-gray-700">{s.totalMeals || 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1508,8 +1844,7 @@ function TeacherDashboard({
 }) {
   const [activeTab, setActiveTab] = useState("scanner");
   const [query, setQuery] = useState("");
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = todayStart();
   const filtered =
     query.trim().length > 0
       ? transactions.filter(
@@ -1593,15 +1928,16 @@ function TeacherDashboard({
                       <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
                         <th className="py-3 px-5 font-semibold">Student</th>
                         <th className="py-3 px-5 font-semibold">Adm No.</th>
+                        <th className="py-3 px-5 font-semibold">Grade / Stream</th>
                         <th className="py-3 px-5 font-semibold">Due Date</th>
                         <th className="py-3 px-5 font-semibold">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filtered.map((tx) => {
-                        const isActive = new Date(tx.dueDate) >= today;
+                        const isActive = parseLocalDate(tx.dueDate) >= today;
                         const daysLeft = Math.ceil(
-                          (new Date(tx.dueDate) - today) /
+                          (parseLocalDate(tx.dueDate) - today) /
                             (1000 * 60 * 60 * 24),
                         );
                         return (
@@ -1614,6 +1950,15 @@ function TeacherDashboard({
                             </td>
                             <td className="py-4 px-5 text-gray-600">
                               {tx.adm}
+                            </td>
+                            <td className="py-4 px-5">
+                              {tx.grade ? (
+                                <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-indigo-50 text-indigo-700">
+                                  {tx.grade}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
                             </td>
                             <td className="py-4 px-5 text-gray-600">
                               {tx.dueDate}
@@ -1694,7 +2039,7 @@ function StudentsTab({ transactions }) {
     return acc;
   }, {});
 
-  const today = new Date();
+  const today = todayStart();
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1748,7 +2093,7 @@ function StudentsTab({ transactions }) {
             const students = grouped[grade];
             if (!students || students.length === 0) return null;
             const activeCount = students.filter(
-              (tx) => new Date(tx.dueDate) >= today
+              (tx) => parseLocalDate(tx.dueDate) >= today
             ).length;
             return (
               <div key={grade} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -1786,9 +2131,9 @@ function StudentsTab({ transactions }) {
                     </thead>
                     <tbody>
                       {students.map((tx) => {
-                        const isActive = new Date(tx.dueDate) >= today;
+                        const isActive = parseLocalDate(tx.dueDate) >= today;
                         const daysLeft = Math.ceil(
-                          (new Date(tx.dueDate) - today) / (1000 * 60 * 60 * 24)
+                          (parseLocalDate(tx.dueDate) - today) / (1000 * 60 * 60 * 24)
                         );
                         return (
                           <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50 transition">
@@ -1840,323 +2185,799 @@ function StudentsTab({ transactions }) {
   );
 }
 
+// ─── Accountant Dashboard ─────────────────────────────────────
+function AccountantDashboard({ schoolName, user, onLogout, subscription }) {
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [summary, setSummary] = useState(null);
+  const [payments, setPayments] = useState([]);
+  const [defaulters, setDefaulters] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [mealCostPerHead, setMealCostPerHead] = useState(50);
+
+  // Attendance
+  const [attendanceDates, setAttendanceDates] = useState([]);
+  const [selectedAttendanceDate, setSelectedAttendanceDate] = useState("");
+  const [attendanceStudents, setAttendanceStudents] = useState([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+
+  // Top-up form
+  const [topupForm, setTopupForm] = useState({ adm: "", amount: "", dueDate: "", paymentMode: "Cash", mpesaRef: "" });
+  const [topupMsg, setTopupMsg] = useState(null);
+  const [topupResult, setTopupResult] = useState(null);
+
+  // Refund form
+  const [refundForm, setRefundForm] = useState({ adm: "", amount: "", reason: "" });
+  const [refundMsg, setRefundMsg] = useState(null);
+
+  const today = new Date().toISOString().split("T")[0];
+
+  const loadAttendanceStudents = (date) => {
+    if (!date) return;
+    setAttendanceLoading(true);
+    api(`/api/accountant/meal-attendance?date=${date}`)
+      .then(r => r.json())
+      .then(data => { setAttendanceStudents(Array.isArray(data) ? data : []); setAttendanceLoading(false); })
+      .catch(() => setAttendanceLoading(false));
+  };
+
+  const handleAttendanceDateChange = (date) => {
+    setSelectedAttendanceDate(date);
+  };
+
+  // Auto-fetch students whenever selected date changes
+  useEffect(() => {
+    if (selectedAttendanceDate) loadAttendanceStudents(selectedAttendanceDate);
+  }, [selectedAttendanceDate]);
+
+  const loadData = () => {
+    setLoading(true);
+    Promise.all([
+      api("/api/accountant/summary").then(r => r.json()),
+      api(`/api/accountant/payments${dateFrom || dateTo ? `?from=${dateFrom}&to=${dateTo}` : ""}`).then(r => r.json()),
+      api("/api/accountant/defaulters").then(r => r.json()),
+      api("/api/accountant/meal-attendance").then(r => r.json()),
+    ]).then(([s, p, d, a]) => {
+      setSummary(s);
+      setPayments(Array.isArray(p) ? p : []);
+      setDefaulters(Array.isArray(d) ? d : []);
+      const dates = Array.isArray(a) ? a : [];
+      setAttendanceDates(dates);
+      // Always prefer today's date; fall back to most recent date
+      const todayEntry = dates.find(row => row.date === today);
+      const targetDate = todayEntry ? today : (dates[0]?.date || "");
+      // Setting this triggers the useEffect above to fetch students
+      if (targetDate) setSelectedAttendanceDate(targetDate);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  };
+
+  const handleExportAttendanceCSV = () => {
+    if (!selectedAttendanceDate) return;
+    const token = localStorage.getItem("shulemeal_token");
+    fetch(`/api/accountant/meal-attendance/export-csv?date=${selectedAttendanceDate}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(r => r.blob()).then(blob => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `attendance-${selectedAttendanceDate}.csv`;
+      a.click();
+    });
+  };
+
+  useEffect(() => { loadData(); }, []);
+
+  const handleTopup = async (e) => {
+    e.preventDefault();
+    setTopupMsg(null); setTopupResult(null);
+    const res = await api("/api/accountant/topup", {
+      method: "POST",
+      body: JSON.stringify({ ...topupForm, amount: parseFloat(topupForm.amount) }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setTopupMsg({ type: "error", text: data.error || "Top-up failed" }); return; }
+    setTopupResult(data);
+    setTopupMsg({ type: "success", text: `Card extended for ${data.studentName} until ${data.dueDate}` });
+    setTopupForm({ adm: "", amount: "", dueDate: "", paymentMode: "Cash", mpesaRef: "" });
+    loadData();
+  };
+
+  const handleRefund = async (e) => {
+    e.preventDefault();
+    setRefundMsg(null);
+    const res = await api("/api/accountant/refund", {
+      method: "POST",
+      body: JSON.stringify({ ...refundForm, amount: parseFloat(refundForm.amount) }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setRefundMsg({ type: "error", text: data.error || "Refund failed" }); return; }
+    setRefundMsg({ type: "success", text: "Refund recorded successfully." });
+    setRefundForm({ adm: "", amount: "", reason: "" });
+    loadData();
+  };
+
+  const handleExportCSV = () => {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    const token = localStorage.getItem("shulemeal_token");
+    const url = `/api/accountant/export-csv?${params.toString()}`;
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.blob())
+      .then(blob => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "payments-export.csv";
+        a.click();
+      });
+  };
+
+  const generateReceipt = (tx) => {
+    const { jsPDF } = window.jspdf || {};
+    // Use the globally available jsPDF from the import at the top of App.jsx
+    import("jspdf").then(({ jsPDF }) => {
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a5" });
+      const W = 148, pad = 14;
+      // Header
+      doc.setFillColor(55, 48, 163);
+      doc.rect(0, 0, W, 28, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(14); doc.setFont("helvetica", "bold");
+      doc.text("PAYMENT RECEIPT", W / 2, 12, { align: "center" });
+      doc.setFontSize(8); doc.setFont("helvetica", "normal");
+      doc.text(schoolName || "ShuleMeal School", W / 2, 20, { align: "center" });
+      // Body
+      doc.setTextColor(30, 30, 30);
+      let y = 38;
+      const row = (label, value, bold = false) => {
+        doc.setFontSize(8); doc.setFont("helvetica", "normal"); doc.setTextColor(107, 114, 128);
+        doc.text(label, pad, y);
+        doc.setFontSize(10); doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setTextColor(17, 24, 39);
+        doc.text(String(value), pad + 45, y);
+        y += 9;
+      };
+      row("Receipt No.", `RCP-${String(tx.id).padStart(6, "0")}`);
+      row("Date", tx.paidDate || today);
+      row("Student Name", tx.studentName, true);
+      row("Admission No.", tx.adm);
+      if (tx.grade) row("Class / Grade", tx.grade);
+      row("Amount Paid", `KSh ${Math.abs(tx.amount).toLocaleString()}`, true);
+      row("Payment Mode", tx.paymentMode || "Cash");
+      if (tx.mpesaRef) row("M-Pesa Ref", tx.mpesaRef);
+      row("Valid Until", tx.dueDate);
+      // Divider
+      y += 2;
+      doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.3);
+      doc.line(pad, y, W - pad, y); y += 8;
+      // Footer
+      doc.setFontSize(8); doc.setFont("helvetica", "italic"); doc.setTextColor(107, 114, 128);
+      doc.text("Thank you for your payment. This is an official receipt.", W / 2, y, { align: "center" });
+      y += 6;
+      doc.text("ShuleMeal Cards — Powered by ShuleMeal", W / 2, y, { align: "center" });
+      doc.save(`receipt-${tx.adm}-${tx.paidDate || today}.pdf`);
+    });
+  };
+
+  const whatsappMessage = (tx) => {
+    const days = Math.ceil((new Date(today) - new Date(tx.dueDate)) / (1000 * 60 * 60 * 24));
+    const msg = `Dear Parent, ${tx.studentName}'s ShuleMeal card expired on ${tx.dueDate} (${days} day${days !== 1 ? "s" : ""} ago). Please top up to reactivate their meal plan. Contact the school bursar for payment details.`;
+    return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  };
+
+  const TABS = [
+    ["dashboard", "📊", "Dashboard"],
+    ["attendance", "🍽", "Attendance"],
+    ["payments", "💳", "Payments"],
+    ["defaulters", "⚠️", "Defaulters"],
+    ["refund", "↩️", "Refund"],
+  ];
+
+  const inputCls = "w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm";
+  const labelCls = "block text-sm font-semibold text-gray-700 mb-1";
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <SubscriptionBanner subscription={subscription} />
+      <header className="bg-emerald-700 text-white shadow-md">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🧾</span>
+            <div>
+              <h1 className="text-xl font-bold">Accountant Portal</h1>
+              <p className="text-emerald-200 text-xs">{schoolName}</p>
+            </div>
+          </div>
+          <div className="flex bg-emerald-800/50 p-1 rounded-lg flex-wrap gap-1">
+            {TABS.map(([key, icon, label]) => (
+              <button key={key} onClick={() => setActiveTab(key)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold transition ${activeTab === key ? "bg-white text-emerald-700 shadow" : "text-emerald-100 hover:text-white hover:bg-emerald-700/50"}`}>
+                {icon} {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="bg-emerald-800 px-3 py-1 rounded-full text-sm font-medium">{user}</span>
+            <button onClick={onLogout} className="flex items-center gap-1.5 bg-emerald-800 hover:bg-emerald-900 px-3 py-1.5 rounded-lg text-sm font-medium transition">
+              <LogOut className="w-4 h-4" /> Logout
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-8">
+
+        {/* ── DASHBOARD TAB ── */}
+        {activeTab === "dashboard" && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-gray-900">Financial Dashboard</h2>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-500 font-medium">Meal cost/head (KSh)</label>
+                <input type="number" value={mealCostPerHead} onChange={e => setMealCostPerHead(Number(e.target.value))}
+                  className="w-24 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+              </div>
+            </div>
+            {loading ? <p className="text-gray-400 text-center py-12">Loading…</p> : (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+                  {[
+                    { label: "Total Revenue", value: `KSh ${(summary?.totalRevenue || 0).toLocaleString()}`, color: "bg-emerald-50 border-emerald-200 text-emerald-800", sub: "text-emerald-600" },
+                    { label: "Today's Inflow", value: `KSh ${(summary?.todayRevenue || 0).toLocaleString()}`, color: "bg-blue-50 border-blue-200 text-blue-800", sub: "text-blue-600" },
+                    { label: "Active Cards", value: summary?.activeCards || 0, color: "bg-green-50 border-green-200 text-green-800", sub: "text-green-600" },
+                    { label: "Defaulters", value: summary?.expiredCards || 0, color: "bg-red-50 border-red-200 text-red-800", sub: "text-red-600" },
+                    { label: "Today's Meals", value: summary?.todayMeals || 0, color: "bg-orange-50 border-orange-200 text-orange-800", sub: "text-orange-600" },
+                    { label: "Meal Cost Today", value: `KSh ${((summary?.todayMeals || 0) * mealCostPerHead).toLocaleString()}`, color: "bg-purple-50 border-purple-200 text-purple-800", sub: "text-purple-600" },
+                  ].map((c, i) => (
+                    <div key={i} className={`${c.color} border rounded-xl p-4`}>
+                      <p className={`text-xs font-bold uppercase ${c.sub}`}>{c.label}</p>
+                      <p className="text-2xl font-black mt-1">{c.value}</p>
+                    </div>
+                  ))}
+                </div>
+                {/* Daily reconciliation */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                  <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">📋 Today's Reconciliation — {today}</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {["Cash", "M-Pesa", "Bank Deposit", "Cheque"].map(mode => {
+                      const modeTotal = payments.filter(p => p.paidDate === today && p.paymentMode === mode && p.amount > 0).reduce((s, p) => s + p.amount, 0);
+                      return (
+                        <div key={mode} className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+                          <p className="text-xs text-gray-500 font-bold uppercase">{mode}</p>
+                          <p className="text-xl font-black text-gray-800 mt-1">KSh {modeTotal.toLocaleString()}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── ATTENDANCE TAB ── */}
+        {activeTab === "attendance" && (
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Meal Attendance</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Students served per day — Tea Break, Lunch & Supper</p>
+              </div>
+              <button onClick={() => {
+                  // Reload date list then re-fetch students for selected date
+                  api("/api/accountant/meal-attendance").then(r => r.json()).then(a => {
+                    const dates = Array.isArray(a) ? a : [];
+                    setAttendanceDates(dates);
+                    const todayEntry = dates.find(row => row.date === today);
+                    const target = todayEntry ? today : (dates[0]?.date || selectedAttendanceDate);
+                    if (target) setSelectedAttendanceDate(prev => {
+                      // Force re-trigger useEffect even if same date
+                      if (prev === target) { loadAttendanceStudents(target); return prev; }
+                      return target;
+                    });
+                  });
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg transition">
+                ↻ Refresh
+              </button>
+            </div>
+
+            {/* Date summary cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {attendanceDates.length === 0 && !loading ? (
+                <p className="col-span-4 text-center text-gray-400 py-10">No meal scan records yet.</p>
+              ) : attendanceDates.map((row) => (
+                <button key={row.date} onClick={() => handleAttendanceDateChange(row.date)}
+                  className={`text-left p-4 rounded-xl border transition ${selectedAttendanceDate === row.date ? "bg-emerald-600 border-emerald-600 text-white shadow-md" : "bg-white border-gray-200 hover:border-emerald-400 hover:shadow-sm"}`}>
+                  <p className={`text-xs font-bold uppercase mb-1 ${selectedAttendanceDate === row.date ? "text-emerald-100" : "text-gray-500"}`}>
+                    {row.date === today ? `Today — ${row.date}` : row.date}
+                  </p>
+                  <p className={`text-2xl font-black ${selectedAttendanceDate === row.date ? "text-white" : "text-gray-800"}`}>{row.studentCount}</p>
+                  <p className={`text-xs mt-1 ${selectedAttendanceDate === row.date ? "text-emerald-100" : "text-gray-400"}`}>students</p>
+                  <div className={`flex gap-2 mt-2 text-xs font-semibold ${selectedAttendanceDate === row.date ? "text-emerald-100" : "text-gray-500"}`}>
+                    <span>☕ {row.tea || 0}</span>
+                    <span>🍽 {row.lunch || 0}</span>
+                    <span>🌙 {row.supper || 0}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Student list for selected date */}
+            {selectedAttendanceDate && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-gray-800">
+                      {selectedAttendanceDate === today ? "Today's" : selectedAttendanceDate} Attendance
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      {attendanceStudents.length} student{attendanceStudents.length !== 1 ? "s" : ""} served
+                      {attendanceStudents.length > 0 && (
+                        <> · ☕ {attendanceStudents.filter(s => s.tea).length}
+                        &nbsp;· 🍽 {attendanceStudents.filter(s => s.lunch).length}
+                        &nbsp;· 🌙 {attendanceStudents.filter(s => s.supper).length}</>
+                      )}
+                    </p>
+                  </div>
+                  <button onClick={handleExportAttendanceCSV}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white text-sm font-bold rounded-lg transition">
+                    <Download className="w-4 h-4" /> Export CSV
+                  </button>
+                </div>
+                {attendanceLoading ? (
+                  <p className="p-8 text-center text-gray-400">Loading students…</p>
+                ) : attendanceStudents.length === 0 ? (
+                  <p className="p-8 text-center text-gray-400">No students found for this date.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider border-b border-gray-200">
+                          <th className="py-3 px-5 font-semibold">#</th>
+                          <th className="py-3 px-5 font-semibold">Student Name</th>
+                          <th className="py-3 px-5 font-semibold">Adm No.</th>
+                          <th className="py-3 px-5 font-semibold">Grade / Stream</th>
+                          <th className="py-3 px-5 font-semibold text-sky-600">☕ Tea</th>
+                          <th className="py-3 px-5 font-semibold text-orange-600">🍽 Lunch</th>
+                          <th className="py-3 px-5 font-semibold text-indigo-600">🌙 Supper</th>
+                          <th className="py-3 px-5 font-semibold">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attendanceStudents.map((s, i) => (
+                          <tr key={s.adm} className={`border-b border-gray-50 hover:bg-gray-50 ${i % 2 === 0 ? "" : "bg-gray-50/40"}`}>
+                            <td className="py-3 px-5 text-gray-400 text-sm">{i + 1}</td>
+                            <td className="py-3 px-5 font-semibold text-gray-800">{s.studentName}</td>
+                            <td className="py-3 px-5 text-gray-500 font-mono text-sm">{s.adm}</td>
+                            <td className="py-3 px-5">
+                              {s.grade
+                                ? <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-indigo-50 text-indigo-700">{s.grade}</span>
+                                : <span className="text-xs text-gray-400">—</span>}
+                            </td>
+                            <td className="py-3 px-5">
+                              {s.tea ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-sky-100 text-sky-700">✓</span>
+                                : <span className="text-gray-300 text-xs">—</span>}
+                            </td>
+                            <td className="py-3 px-5">
+                              {s.lunch ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">✓</span>
+                                : <span className="text-gray-300 text-xs">—</span>}
+                            </td>
+                            <td className="py-3 px-5">
+                              {s.supper ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700">✓</span>
+                                : <span className="text-gray-300 text-xs">—</span>}
+                            </td>
+                            <td className="py-3 px-5 font-bold text-gray-700">{s.totalMeals}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── PAYMENTS TAB ── */}
+        {activeTab === "payments" && (
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <h2 className="text-2xl font-bold text-gray-900">Payment Records</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+                <span className="text-gray-400 text-sm">to</span>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+                <button onClick={loadData} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg transition">Filter</button>
+                <button onClick={handleExportCSV} className="flex items-center gap-1.5 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white text-sm font-bold rounded-lg transition">
+                  <Download className="w-4 h-4" /> Export CSV
+                </button>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider border-b border-gray-200">
+                      <th className="py-3 px-5 font-semibold">Student</th>
+                      <th className="py-3 px-5 font-semibold">Grade</th>
+                      <th className="py-3 px-5 font-semibold">Amount</th>
+                      <th className="py-3 px-5 font-semibold">Paid On</th>
+                      <th className="py-3 px-5 font-semibold">Due Date</th>
+                      <th className="py-3 px-5 font-semibold">Mode</th>
+                      <th className="py-3 px-5 font-semibold">Ref</th>
+                      <th className="py-3 px-5 font-semibold">Receipt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payments.length === 0 ? (
+                      <tr><td colSpan="8" className="py-10 text-center text-gray-400">No payment records found.</td></tr>
+                    ) : payments.map((p, i) => (
+                      <tr key={p.id} className={`border-b border-gray-50 hover:bg-gray-50 ${p.amount < 0 ? "bg-red-50/40" : ""}`}>
+                        <td className="py-3 px-5">
+                          <p className="font-semibold text-gray-800 text-sm">{p.studentName}</p>
+                          <p className="text-xs text-gray-400 font-mono">{p.adm}</p>
+                        </td>
+                        <td className="py-3 px-5 text-sm text-gray-600">{p.grade || "—"}</td>
+                        <td className={`py-3 px-5 font-bold text-sm ${p.amount < 0 ? "text-red-600" : "text-gray-800"}`}>
+                          {p.amount < 0 ? "−" : ""}KSh {Math.abs(p.amount).toLocaleString()}
+                          {p.amount < 0 && <span className="ml-1 text-xs font-normal text-red-500">Refund</span>}
+                        </td>
+                        <td className="py-3 px-5 text-sm text-gray-600">{p.paidDate}</td>
+                        <td className="py-3 px-5 text-sm text-gray-600">{p.dueDate}</td>
+                        <td className="py-3 px-5">
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-gray-100 text-gray-700">{p.paymentMode || "Cash"}</span>
+                        </td>
+                        <td className="py-3 px-5 text-xs text-gray-500 font-mono">{p.mpesaRef || "—"}</td>
+                        <td className="py-3 px-5">
+                          {p.amount > 0 && (
+                            <button onClick={() => generateReceipt(p)} className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold rounded-lg transition">
+                              <Printer className="w-3.5 h-3.5" /> Receipt
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── DEFAULTERS TAB ── */}
+        {activeTab === "defaulters" && (
+          <div className="space-y-4">
+            <h2 className="text-2xl font-bold text-gray-900">Defaulters & Arrears</h2>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              {defaulters.length === 0 ? (
+                <p className="p-10 text-center text-gray-400">No defaulters — all cards are active! 🎉</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-red-50 text-gray-600 text-xs uppercase tracking-wider border-b border-red-100">
+                        <th className="py-3 px-5 font-semibold">Student</th>
+                        <th className="py-3 px-5 font-semibold">Grade</th>
+                        <th className="py-3 px-5 font-semibold">Expired On</th>
+                        <th className="py-3 px-5 font-semibold">Days Overdue</th>
+                        <th className="py-3 px-5 font-semibold">Last Amount</th>
+                        <th className="py-3 px-5 font-semibold">Reminder</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {defaulters.map((tx, i) => {
+                        const overdue = Math.ceil((new Date(today) - new Date(tx.dueDate)) / (1000 * 60 * 60 * 24));
+                        return (
+                          <tr key={tx.id} className="border-b border-gray-50 hover:bg-red-50/30">
+                            <td className="py-3 px-5">
+                              <p className="font-semibold text-gray-800 text-sm">{tx.studentName}</p>
+                              <p className="text-xs text-gray-400 font-mono">{tx.adm}</p>
+                            </td>
+                            <td className="py-3 px-5 text-sm text-gray-600">{tx.grade || "—"}</td>
+                            <td className="py-3 px-5">
+                              <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700">{tx.dueDate}</span>
+                            </td>
+                            <td className="py-3 px-5 font-bold text-red-600 text-sm">{overdue} day{overdue !== 1 ? "s" : ""}</td>
+                            <td className="py-3 px-5 font-bold text-gray-700 text-sm">KSh {tx.amount?.toLocaleString()}</td>
+                            <td className="py-3 px-5">
+                              <a href={whatsappMessage(tx)} target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-lg transition">
+                                💬 WhatsApp
+                              </a>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── TOP-UP TAB ── */}
+        {activeTab === "topup" && (
+          <div className="max-w-lg mx-auto space-y-6">
+            <h2 className="text-2xl font-bold text-gray-900">Extend Card / Top-Up</h2>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <form onSubmit={handleTopup} className="space-y-4">
+                <div>
+                  <label className={labelCls}>Admission Number</label>
+                  <input type="text" value={topupForm.adm} onChange={e => setTopupForm(p => ({ ...p, adm: e.target.value }))}
+                    placeholder="e.g. 4501" className={inputCls} required />
+                </div>
+                <div>
+                  <label className={labelCls}>Amount Paid (KSh)</label>
+                  <input type="number" value={topupForm.amount} onChange={e => setTopupForm(p => ({ ...p, amount: e.target.value }))}
+                    placeholder="0.00" className={inputCls} required />
+                </div>
+                <div>
+                  <label className={labelCls}>New Due Date</label>
+                  <input type="date" value={topupForm.dueDate} onChange={e => setTopupForm(p => ({ ...p, dueDate: e.target.value }))}
+                    className={inputCls} required />
+                </div>
+                <div>
+                  <label className={labelCls}>Payment Mode</label>
+                  <select value={topupForm.paymentMode} onChange={e => setTopupForm(p => ({ ...p, paymentMode: e.target.value }))} className={inputCls}>
+                    {["Cash", "M-Pesa", "Bank Deposit", "Cheque"].map(m => <option key={m}>{m}</option>)}
+                  </select>
+                </div>
+                {topupForm.paymentMode === "M-Pesa" && (
+                  <div>
+                    <label className={labelCls}>M-Pesa Reference Code</label>
+                    <input type="text" value={topupForm.mpesaRef} onChange={e => setTopupForm(p => ({ ...p, mpesaRef: e.target.value }))}
+                      placeholder="e.g. SDF987XYS" className={inputCls} />
+                  </div>
+                )}
+                {topupMsg && (
+                  <div className={`rounded-lg px-4 py-3 text-sm font-medium ${topupMsg.type === "success" ? "bg-green-50 text-green-800 border border-green-200" : "bg-red-50 text-red-800 border border-red-200"}`}>
+                    {topupMsg.text}
+                  </div>
+                )}
+                <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition">
+                  <CheckCircle2 className="w-5 h-5" /> Process Top-Up
+                </button>
+              </form>
+              {topupResult && (
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                  <button onClick={() => generateReceipt(topupResult)}
+                    className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg transition">
+                    <Printer className="w-4 h-4" /> Generate Receipt
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── REFUND TAB ── */}
+        {activeTab === "refund" && (
+          <div className="max-w-lg mx-auto space-y-6">
+            <h2 className="text-2xl font-bold text-gray-900">Payment Reversal / Refund</h2>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+              <strong>Note:</strong> Refunds are recorded as negative transactions. The original payment is preserved in the audit trail.
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <form onSubmit={handleRefund} className="space-y-4">
+                <div>
+                  <label className={labelCls}>Admission Number</label>
+                  <input type="text" value={refundForm.adm} onChange={e => setRefundForm(p => ({ ...p, adm: e.target.value }))}
+                    placeholder="e.g. 4501" className={inputCls} required />
+                </div>
+                <div>
+                  <label className={labelCls}>Refund Amount (KSh)</label>
+                  <input type="number" value={refundForm.amount} onChange={e => setRefundForm(p => ({ ...p, amount: e.target.value }))}
+                    placeholder="0.00" className={inputCls} required />
+                </div>
+                <div>
+                  <label className={labelCls}>Reason for Refund</label>
+                  <textarea value={refundForm.reason} onChange={e => setRefundForm(p => ({ ...p, reason: e.target.value }))}
+                    placeholder="e.g. Student transferred to another school mid-term" rows={3}
+                    className={inputCls + " resize-none"} required />
+                </div>
+                {refundMsg && (
+                  <div className={`rounded-lg px-4 py-3 text-sm font-medium ${refundMsg.type === "success" ? "bg-green-50 text-green-800 border border-green-200" : "bg-red-50 text-red-800 border border-red-200"}`}>
+                    {refundMsg.text}
+                  </div>
+                )}
+                <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition">
+                  ↩️ Record Refund
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+      </main>
+    </div>
+  );
+}
+
 // ─── Meal Card Visual ─────────────────────────────────────────
 function MealCard({ tx, template, schoolName }) {
   const [qrSrc, setQrSrc] = useState(null);
 
-  // Use template colors or defaults
-  const primaryColor = template?.primaryColor || "#3730a3";
+  const primaryColor   = template?.primaryColor   || "#3730a3";
   const secondaryColor = template?.secondaryColor || "#4338ca";
   const backgroundColor = template?.backgroundColor || "#ffffff";
-  const textColor = template?.textColor || "#111827";
-  const borderRadius = template?.borderRadius || 6;
-  const qrPosition = template?.qrPosition || "right";
+  const textColor      = template?.textColor      || "#111827";
+  const borderRadius   = template?.borderRadius   || 6;
   const showSchoolName = template?.showSchoolName !== false;
 
   useEffect(() => {
     if (!tx.id) return;
     api(`/api/transactions/${tx.id}/qr`)
       .then((r) => r.json())
-      .then((d) => {
-        if (d.qr) setQrSrc(d.qr);
-      })
+      .then((d) => { if (d.qr) setQrSrc(d.qr); })
       .catch(() => {});
   }, [tx.id]);
 
-  const cardStyle = {
-    width: "3.5in",
-    height: "2in",
-    border: `2px solid ${primaryColor}`,
-    backgroundColor: backgroundColor,
-    position: "relative",
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-    padding: "12px",
-    boxSizing: "border-box",
-    fontFamily: "Inter, system-ui, sans-serif",
-    borderRadius: `${borderRadius}px`,
-  };
+  const lbl = (text) => ({
+    fontSize: "7px",
+    fontWeight: "bold",
+    textTransform: "uppercase",
+    color: textColor,
+    opacity: 0.55,
+    margin: "0 0 1px",
+    letterSpacing: "0.04em",
+  });
 
-  const headerStyle = {
-    backgroundColor: primaryColor,
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: "40px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  };
-
-  const contentStyle = {
-    marginTop: "44px",
-    display: "flex",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    flex: 1,
-  };
-
-  const infoColumnStyle = {
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "space-between",
-    width: qrPosition === "center" ? "100%" : "62%",
-    height: "100%",
-  };
-
-  const qrColumnStyle = {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    borderLeft: qrPosition !== "center" ? "1px solid #e5e7eb" : "none",
-    borderRight: qrPosition === "center" ? "1px solid #e5e7eb" : "none",
-    paddingLeft: qrPosition === "left" ? "12px" : "0",
-    paddingRight: qrPosition === "right" ? "12px" : "0",
-    height: "100%",
-    order: qrPosition === "left" ? 2 : qrPosition === "right" ? 3 : 1,
-  };
-
-  const infoWrapperStyle = {
-    order: qrPosition === "center" ? 2 : 1,
-    display: "flex",
-    flexDirection: qrPosition === "center" ? "row" : "column",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: "12px",
-    width: qrPosition === "center" ? "auto" : "100%",
-  };
+  const val = (size = "11px", weight = 700) => ({
+    fontSize: size,
+    fontWeight: weight,
+    color: textColor,
+    margin: 0,
+    lineHeight: 1.2,
+  });
 
   return (
-    <div style={cardStyle}>
-      <div style={headerStyle}>
-        <span
-          style={{
-            color: "#ffffff",
-            fontWeight: 800,
-            fontSize: "0.875rem",
-            letterSpacing: "0.1em",
-          }}
-        >
+    <div style={{
+      width: "3.5in",
+      height: "2in",
+      border: `2px solid ${primaryColor}`,
+      backgroundColor,
+      borderRadius: `${borderRadius}px`,
+      overflow: "hidden",
+      display: "flex",
+      flexDirection: "column",
+      fontFamily: "Inter, system-ui, sans-serif",
+      boxSizing: "border-box",
+    }}>
+
+      {/* ── Header ── */}
+      <div style={{
+        backgroundColor: primaryColor,
+        padding: "5px 10px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexShrink: 0,
+      }}>
+        <span style={{ color: "#fff", fontWeight: 800, fontSize: "11px", letterSpacing: "0.08em" }}>
           SHULE MEAL CARD
         </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          {tx.cardType === "pledge" && (
+            <span style={{ color: "#fcd34d", fontSize: "13px", fontWeight: "bold", lineHeight: 1 }} title="Pledge">◆</span>
+          )}
+          {tx.cardType === "special" && (
+            <span style={{ color: "#06b6d4", fontSize: "13px", fontWeight: "bold", lineHeight: 1 }} title="Special Case">★</span>
+          )}
+          {showSchoolName && (
+            <span style={{ color: "rgba(255,255,255,0.85)", fontSize: "8px", fontWeight: 600, maxWidth: "45%", textAlign: "right", lineHeight: 1.2 }}>
+              {schoolName || tx.schoolName || ""}
+            </span>
+          )}
+        </div>
       </div>
-      <div style={contentStyle}>
-        {qrPosition === "left" && (
-          <div style={qrColumnStyle}>
-            <div
-              style={{
-                padding: "4px",
-                backgroundColor: "#fff",
-                border: `1px solid ${secondaryColor}`,
-                borderRadius: "6px",
-              }}
-            >
-              <img src={qrSrc || ""} width="60" height="60" alt="QR Code" />
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                marginTop: "4px",
-                color: secondaryColor,
-              }}
-            >
-              <ShieldCheck
-                style={{ width: "10px", height: "10px", marginRight: "3px" }}
-              />
-              <span style={{ fontSize: "7px", fontWeight: "bold" }}>
-                VERIFIED
-              </span>
-            </div>
-          </div>
-        )}
 
-        <div style={infoWrapperStyle}>
-          <div style={infoColumnStyle}>
-            {showSchoolName && (
+      {/* ── Body: info left | QR right ── */}
+      <div style={{
+        display: "flex",
+        flex: 1,
+        overflow: "hidden",
+        padding: "6px 8px 4px",
+        gap: "8px",
+        minHeight: 0,
+      }}>
+
+        {/* Info column */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
+
+          {/* Student name */}
+          <div>
+            <p style={lbl()}>Student</p>
+            <p style={val("12px", 800)}>{tx.studentName}</p>
+          </div>
+
+          {/* ADM + Grade in a row */}
+          <div style={{ display: "flex", gap: "10px" }}>
+            <div>
+              <p style={lbl()}>Adm No.</p>
+              <p style={val("10px")}>{tx.adm}</p>
+            </div>
+            {tx.grade && (
               <div>
-                <p
-                  style={{
-                    fontSize: "9px",
-                    color: textColor,
-                    fontWeight: "bold",
-                    textTransform: "uppercase",
-                    margin: "0 0 2px",
-                    opacity: 0.7,
-                  }}
-                >
-                  School
-                </p>
-                <p
-                  style={{
-                    fontSize: "0.75rem",
-                    fontWeight: 700,
-                    color: textColor,
-                    margin: 0,
-                    lineHeight: 1.1,
-                  }}
-                >
-                  {schoolName || tx.schoolName || "ShuleMeal School"}
-                </p>
+                <p style={lbl()}>Class</p>
+                <p style={val("10px")}>{tx.grade}</p>
               </div>
             )}
-            <div>
-              <p
-                style={{
-                  fontSize: "9px",
-                  color: textColor,
-                  fontWeight: "bold",
-                  textTransform: "uppercase",
-                  margin: "0 0 2px",
-                  opacity: 0.7,
-                }}
-              >
-                Student
-              </p>
-              <p
-                style={{
-                  fontSize: "1rem",
-                  fontWeight: 800,
-                  color: textColor,
-                  margin: 0,
-                  lineHeight: 1.1,
-                }}
-              >
-                {tx.studentName}
-              </p>
-            </div>
-            <div>
-              <p
-                style={{
-                  fontSize: "9px",
-                  color: textColor,
-                  fontWeight: "bold",
-                  textTransform: "uppercase",
-                  margin: "0 0 2px",
-                  opacity: 0.7,
-                }}
-              >
-                Admission No.
-              </p>
-              <p
-                style={{
-                  fontSize: "0.875rem",
-                  fontWeight: "bold",
-                  color: textColor,
-                  margin: 0,
-                }}
-              >
-                {tx.adm}
-              </p>
-            </div>
-            <div
-              style={{
-                backgroundColor: "#fef2f2",
-                padding: "5px 8px",
+          </div>
+
+          {/* Meal slots */}
+          <div style={{ display: "flex", gap: "4px", marginTop: "auto" }}>
+            {[["☕", "Tea"], ["🍽", "Lunch"], ["🌙", "Supper"]].map(([icon, label]) => (
+              <div key={label} style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                backgroundColor: "#f0fdf4",
+                border: "1px solid #bbf7d0",
                 borderRadius: "4px",
-                border: "1px solid #fecaca",
-                display: "inline-block",
-              }}
-            >
-              <p
-                style={{
-                  fontSize: "8px",
-                  color: "#dc2626",
-                  fontWeight: "bold",
-                  textTransform: "uppercase",
-                  margin: "0 0 1px",
-                }}
-              >
-                Next Due Date
-              </p>
-              <p
-                style={{
-                  fontSize: "0.875rem",
-                  fontWeight: 900,
-                  color: "#b91c1c",
-                  margin: 0,
-                }}
-              >
-                {tx.dueDate}
-              </p>
-            </div>
+                padding: "2px 2px 3px",
+              }}>
+                <span style={{ fontSize: "9px" }}>{icon}</span>
+                <span style={{ fontSize: "5.5px", fontWeight: "bold", color: "#166534", textTransform: "uppercase", marginBottom: "2px" }}>{label}</span>
+                <div style={{ width: "13px", height: "13px", border: "1.5px solid #16a34a", borderRadius: "2px", backgroundColor: "#fff" }} />
+              </div>
+            ))}
           </div>
         </div>
 
-        {qrPosition === "right" && (
-          <div style={qrColumnStyle}>
-            <div
-              style={{
-                padding: "4px",
-                backgroundColor: "#fff",
-                border: `1px solid ${secondaryColor}`,
-                borderRadius: "6px",
-              }}
-            >
-              <img src={qrSrc || ""} width="60" height="60" alt="QR Code" />
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                marginTop: "4px",
-                color: secondaryColor,
-              }}
-            >
-              <ShieldCheck
-                style={{ width: "10px", height: "10px", marginRight: "3px" }}
-              />
-              <span style={{ fontSize: "7px", fontWeight: "bold" }}>
-                VERIFIED
-              </span>
-            </div>
-          </div>
-        )}
+        {/* Divider */}
+        <div style={{ width: "1px", backgroundColor: "#e5e7eb", flexShrink: 0 }} />
 
-        {qrPosition === "center" && (
-          <div style={qrColumnStyle}>
-            <div
-              style={{
-                padding: "4px",
-                backgroundColor: "#fff",
-                border: `1px solid ${secondaryColor}`,
-                borderRadius: "6px",
-              }}
-            >
-              <img src={qrSrc || ""} width="60" height="60" alt="QR Code" />
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                marginTop: "4px",
-                color: secondaryColor,
-              }}
-            >
-              <ShieldCheck
-                style={{ width: "10px", height: "10px", marginRight: "3px" }}
-              />
-              <span style={{ fontSize: "7px", fontWeight: "bold" }}>
-                VERIFIED
-              </span>
-            </div>
+        {/* QR + due date column */}
+        <div style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexShrink: 0,
+          width: "68px",
+        }}>
+          <div style={{
+            padding: "3px",
+            backgroundColor: "#fff",
+            border: `1px solid ${secondaryColor}`,
+            borderRadius: "5px",
+          }}>
+            <img src={qrSrc || ""} width="58" height="58" alt="QR Code" />
           </div>
-        )}
+          <div style={{ display: "flex", alignItems: "center", gap: "2px", color: secondaryColor }}>
+            <ShieldCheck style={{ width: "8px", height: "8px" }} />
+            <span style={{ fontSize: "6px", fontWeight: "bold" }}>VERIFIED</span>
+          </div>
+          {/* Due date */}
+          <div style={{
+            backgroundColor: "#fef2f2",
+            border: "1px solid #fecaca",
+            borderRadius: "4px",
+            padding: "3px 4px",
+            textAlign: "center",
+            width: "100%",
+            boxSizing: "border-box",
+          }}>
+            <p style={{ fontSize: "6px", color: "#dc2626", fontWeight: "bold", textTransform: "uppercase", margin: "0 0 1px" }}>Due Date</p>
+            <p style={{ fontSize: "9px", fontWeight: 900, color: "#b91c1c", margin: 0 }}>{tx.dueDate}</p>
+          </div>
+        </div>
       </div>
-      <div
-        style={{
-          position: "absolute",
-          bottom: "4px",
-          right: "8px",
-          fontSize: "7px",
-          color: "#9ca3af",
-        }}
-      >
-        ID: {String(tx.id).slice(-6)} | {tx.paidDate}
+
+      {/* ── Footer ── */}
+      <div style={{
+        borderTop: "1px solid #f3f4f6",
+        padding: "2px 8px",
+        display: "flex",
+        justifyContent: "flex-end",
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: "6px", color: "#9ca3af" }}>
+          ID: {String(tx.id).slice(-6)} | {tx.paidDate}
+        </span>
       </div>
     </div>
   );
@@ -2173,6 +2994,8 @@ export default function App({ superAdminMode = false }) {
   });
   const [activeTab, setActiveTab] = useState("admin");
   const [transactions, setTransactions] = useState([]);
+  const [archivedTransactions, setArchivedTransactions] = useState([]);
+  const [showArchived, setShowArchived] = useState(false);
   const [subscription, setSubscription] = useState(() => {
     const meta = localStorage.getItem("shulemeal_meta");
     return meta ? JSON.parse(meta).subscription || null : null;
@@ -2182,6 +3005,8 @@ export default function App({ superAdminMode = false }) {
     adm: "",
     amount: "",
     durationWeeks: "4",
+    durationDays: "30",
+    durationType: "weeks",
     grade: "",
   });
   const [previewCard, setPreviewCard] = useState(null);
@@ -2191,6 +3016,11 @@ export default function App({ superAdminMode = false }) {
     durationWeeks: "4",
   });
   const [cardTemplate, setCardTemplate] = useState(null);
+  const [pledgeTx, setPledgeTx] = useState(null);
+  const [pledgeForm, setPledgeForm] = useState({ pledgeAmount: "", durationWeeks: "4" });
+  const [specialTx, setSpecialTx] = useState(null);
+  const [specialForm, setSpecialForm] = useState({ durationWeeks: "4" });
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   // Super admin panel via hash
   useEffect(() => {
@@ -2205,9 +3035,19 @@ export default function App({ superAdminMode = false }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setTransactions(data);
-      // setTransactions(data); // uncomment if you actually use this state
     } catch (error) {
       console.error("Failed to fetch transactions:", error);
+    }
+  };
+
+  const fetchArchived = async () => {
+    try {
+      const res = await api("/api/transactions/archived");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setArchivedTransactions(data);
+    } catch (error) {
+      console.error("Failed to fetch archived:", error);
     }
   };
 
@@ -2266,9 +3106,17 @@ export default function App({ superAdminMode = false }) {
     window.location.hash = "";
   };
 
-  const calculateDueDate = (weeks) => {
+  const calculateDueDate = (weeks, days) => {
     const d = new Date();
-    d.setDate(d.getDate() + parseInt(weeks) * 7);
+    if (days !== undefined && days !== null && days !== "") {
+      const n = parseInt(days);
+      if (isNaN(n) || n < 1) return "—";
+      d.setDate(d.getDate() + n);
+    } else {
+      const w = parseInt(weeks);
+      if (isNaN(w) || w < 1) return "—";
+      d.setDate(d.getDate() + w * 7);
+    }
     return d.toISOString().split("T")[0];
   };
 
@@ -2276,10 +3124,18 @@ export default function App({ superAdminMode = false }) {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this entry? This cannot be undone.")) return;
+    if (!window.confirm("Archive this student record? They will be removed from the dashboard but all data is safely preserved and can be restored if needed.")) return;
     const res = await api(`/api/transactions/${id}`, { method: "DELETE" });
     if (res.ok) setTransactions((prev) => prev.filter((tx) => tx.id !== id));
-    else alert("Delete failed.");
+    else alert("Archive failed.");
+  };
+
+  const handleRestore = async (id) => {
+    const res = await api(`/api/transactions/${id}/restore`, { method: "POST" });
+    if (!res.ok) { alert("Restore failed."); return; }
+    // Remove from archived list and refresh active list
+    setArchivedTransactions((prev) => prev.filter((tx) => tx.id !== id));
+    fetchTransactions();
   };
 
   const handleReplaceCard = async (tx) => {
@@ -2329,10 +3185,51 @@ export default function App({ superAdminMode = false }) {
     setRenewForm({ amount: "", durationWeeks: "4" });
   };
 
+  const handlePledge = async (e) => {
+    e.preventDefault();
+    if (!pledgeForm.pledgeAmount) return alert("Please enter the pledged amount.");
+    const dueDate = calculateDueDate(pledgeForm.durationWeeks);
+    const res = await api(`/api/transactions/${pledgeTx.id}/cardtype`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        cardType: "pledge",
+        pledgeAmount: parseFloat(pledgeForm.pledgeAmount),
+        dueDate,
+      }),
+    });
+    if (!res.ok) { alert("Failed to set pledge. Please try again."); return; }
+    const updated = await res.json();
+    setTransactions((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    setPledgeTx(null);
+    setPledgeForm({ pledgeAmount: "", durationWeeks: "4" });
+    setPreviewCard(updated);
+  };
+
+  const handleSpecialCase = (tx) => {
+    setSpecialTx(tx);
+    setSpecialForm({ durationWeeks: "4" });
+  };
+
+  const handleSpecialCaseSubmit = async (e) => {
+    e.preventDefault();
+    const dueDate = calculateDueDate(specialForm.durationWeeks);
+    const res = await api(`/api/transactions/${specialTx.id}/cardtype`, {
+      method: "PATCH",
+      body: JSON.stringify({ cardType: "special", dueDate }),
+    });
+    if (!res.ok) { alert("Failed to set special case. Please try again."); return; }
+    const updated = await res.json();
+    setTransactions((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    setSpecialTx(null);
+    setPreviewCard(updated);
+  };
+
   const handleLogPayment = async (e) => {
     e.preventDefault();
     if (!form.studentName || !form.adm || !form.amount)
       return alert("Please fill all fields");
+    if (form.durationType === "days" && (!form.durationDays || parseInt(form.durationDays) < 1))
+      return alert("Please enter a valid number of days (minimum 1).");
     const duplicate = transactions.find((tx) => tx.adm === form.adm);
     if (duplicate)
       return alert(
@@ -2343,7 +3240,9 @@ export default function App({ superAdminMode = false }) {
       adm: form.adm,
       amount: parseFloat(form.amount),
       paidDate: new Date().toISOString().split("T")[0],
-      dueDate: calculateDueDate(form.durationWeeks),
+      dueDate: form.durationType === "days"
+        ? calculateDueDate(null, form.durationDays)
+        : calculateDueDate(form.durationWeeks),
       status: "Active",
       grade: form.grade || null,
     };
@@ -2360,88 +3259,134 @@ export default function App({ superAdminMode = false }) {
     // Build the full transaction object for the UI
     const saved = { ...payload, id: data.id, cardToken: data.cardToken };
     setTransactions((prev) => [saved, ...prev]);
-    setForm({ studentName: "", adm: "", amount: "", durationWeeks: "4", grade: "" });
+    setForm({ studentName: "", adm: "", amount: "", durationWeeks: "4", durationDays: "30", durationType: "weeks", grade: "" });
     setPreviewCard(saved);
   };
 
   const drawCard = (doc, tx, originX, originY, schoolName) => {
-    const W = 88.9,
-      H = 60,          // taller card so all content fits
-      lx = originX + 5;
+    const W = 88.9, H = 60;
+    const infoX = originX + 4;   // left info column x
+    const qrX   = originX + 58;  // QR column x
+    const qrW   = W - 58 - 2;    // QR column width
 
-    // Background + border
+    // ── White background + border ──
     doc.setFillColor(255, 255, 255);
     doc.rect(originX, originY, W, H, "F");
     doc.setDrawColor(49, 46, 129);
     doc.setLineWidth(0.4);
-    doc.rect(originX + 0.3, originY + 0.3, W - 0.6, H - 0.6);
+    doc.rect(originX + 0.2, originY + 0.2, W - 0.4, H - 0.4);
 
-    // Header bar
+    // ── Header bar ──
     doc.setFillColor(55, 48, 163);
-    doc.rect(originX, originY, W, 12, "F");
+    doc.rect(originX, originY, W, 11, "F");
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(8);
     doc.setFont("helvetica", "bold");
-    doc.text("SHULE MEAL CARD", originX + W / 2, originY + 7.5, { align: "center" });
+    doc.text("SHULE MEAL CARD", originX + (qrX - originX) / 2, originY + 7, { align: "center" });
+    // School name right-aligned in header
+    if (schoolName) {
+      doc.setFontSize(5.5);
+      doc.setFont("helvetica", "normal");
+      doc.text(schoolName, originX + W - 3, originY + 7, { align: "right" });
+    }
+    // Card type symbol — drawn shapes (helvetica can't render Unicode symbols)
+    // ◆ Pledge = amber filled rotated square (diamond)
+    // ★ Special = purple filled 5-point star
+    const symX = originX + W - (schoolName ? 20 : 5);
+    const symY = originY + 5.5;
+    if (tx.cardType === "pledge") {
+      // Draw a diamond: rotated square using lines
+      const s = 2.8; // half-size
+      doc.setFillColor(252, 211, 77); // amber
+      doc.setDrawColor(252, 211, 77);
+      doc.lines(
+        [[s, s], [s, -s], [-s, -s], [-s, s]],
+        symX, symY, [1, 1], "F", true
+      );
+    } else if (tx.cardType === "special") {
+      // Draw a 5-point star using lines
+      const r1 = 3.2, r2 = 1.4; // outer and inner radius
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const angle = (i * Math.PI) / 5 - Math.PI / 2;
+        const r = i % 2 === 0 ? r1 : r2;
+        pts.push([Math.cos(angle) * r, Math.sin(angle) * r]);
+      }
+      // Convert to relative moves for doc.lines
+      const moves = pts.map((p, i) => {
+        const prev = i === 0 ? [symX, symY] : [symX + pts[i - 1][0], symY + pts[i - 1][1]];
+        return [p[0] - (i === 0 ? 0 : pts[i - 1][0]), p[1] - (i === 0 ? 0 : pts[i - 1][1])];
+      });
+      doc.setFillColor(6, 182, 212); // cyan-500
+      doc.setDrawColor(6, 182, 212);
+      doc.lines(moves, symX + pts[0][0], symY + pts[0][1], [1, 1], "F", true);
+    }
 
-    // SCHOOL label + value (starts below header)
-    doc.setFontSize(5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(107, 114, 128);
-    doc.text("SCHOOL", lx, originY + 16);
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(17, 24, 39);
-    doc.text(schoolName || "ShuleMeal School", lx, originY + 21);
+    // ── Vertical divider ──
+    doc.setDrawColor(229, 231, 235);
+    doc.setLineWidth(0.3);
+    doc.line(qrX - 2, originY + 12, qrX - 2, originY + H - 5);
 
-    // STUDENT label + value
-    doc.setFontSize(5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(107, 114, 128);
-    doc.text("STUDENT", lx, originY + 27);
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(17, 24, 39);
-    doc.text(tx.studentName, lx, originY + 33);
+    // ── INFO COLUMN ──
+    let y = originY + 17;
 
-    // ADMISSION NO. label + value
-    doc.setFontSize(5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(107, 114, 128);
-    doc.text("ADMISSION NO.", lx, originY + 39);
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(31, 41, 55);
-    doc.text(tx.adm, lx, originY + 44.5);
+    // Student name
+    doc.setFontSize(4.5); doc.setFont("helvetica", "normal"); doc.setTextColor(107, 114, 128);
+    doc.text("STUDENT", infoX, y);
+    y += 4;
+    doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(17, 24, 39);
+    doc.text(tx.studentName, infoX, y);
+    y += 5;
 
-    // NEXT DUE DATE box — fully inside the card
+    // ADM + Grade on same row
+    doc.setFontSize(4.5); doc.setFont("helvetica", "normal"); doc.setTextColor(107, 114, 128);
+    doc.text("ADM NO.", infoX, y);
+    if (tx.grade) doc.text("CLASS / GRADE", infoX + 24, y);
+    y += 3.5;
+    doc.setFontSize(7.5); doc.setFont("helvetica", "bold"); doc.setTextColor(17, 24, 39);
+    doc.text(tx.adm, infoX, y);
+    if (tx.grade) doc.text(tx.grade, infoX + 24, y);
+    y += 6;
+
+    // ── Meal slots (Tea | Lunch | Supper) ──
+    const slotW = 14, slotH = 11, slotGap = 1.5;
+    ["Tea Break", "Lunch", "Supper"].forEach((label, i) => {
+      const sx = infoX + i * (slotW + slotGap);
+      doc.setFillColor(240, 253, 244);
+      doc.setDrawColor(187, 247, 208);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(sx, y, slotW, slotH, 1, 1, "FD");
+      doc.setFontSize(4.5); doc.setFont("helvetica", "bold"); doc.setTextColor(22, 101, 52);
+      doc.text(label, sx + slotW / 2, y + 4, { align: "center" });
+      // tick box
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(22, 163, 74);
+      doc.setLineWidth(0.5);
+      doc.rect(sx + slotW / 2 - 2.5, y + 5.5, 5, 4.5, "FD");
+    });
+    y += slotH + 2;
+
+    // ── Due date box ──
     doc.setFillColor(254, 242, 242);
     doc.setDrawColor(254, 202, 202);
     doc.setLineWidth(0.3);
-    doc.roundedRect(lx - 1, originY + 47, 44, 9, 1, 1, "FD");
-    doc.setFontSize(5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(220, 38, 38);
-    doc.text("NEXT DUE DATE", lx, originY + 51);
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(185, 28, 28);
-    doc.text(tx.dueDate, lx, originY + 55.5);
+    doc.roundedRect(infoX, y, 46, 8, 1, 1, "FD");
+    doc.setFontSize(4.5); doc.setFont("helvetica", "normal"); doc.setTextColor(220, 38, 38);
+    doc.text("NEXT DUE DATE", infoX + 2, y + 3.5);
+    doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(185, 28, 28);
+    doc.text(tx.dueDate, infoX + 2, y + 7);
 
-    // Vertical divider between info and QR column
-    doc.setDrawColor(229, 231, 235);
-    doc.setLineWidth(0.3);
-    doc.line(originX + 58, originY + 13, originX + 58, originY + 57);
+    // ── QR COLUMN ──
+    // QR image is added by the caller (handlePrint / handlePrintAll)
+    // Verified badge placeholder
+    doc.setFontSize(4.5); doc.setFont("helvetica", "bold"); doc.setTextColor(67, 56, 202);
+    doc.text("✓ VERIFIED", qrX + qrW / 2, originY + H - 7, { align: "center" });
 
-    // Footer: ID + paid date
-    doc.setFontSize(4.5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(156, 163, 175);
+    // ── Footer ──
+    doc.setFontSize(4); doc.setFont("helvetica", "normal"); doc.setTextColor(156, 163, 175);
     doc.text(
       `ID: ${String(tx.id).slice(-6)} | ${tx.paidDate}`,
-      originX + W - 3,
-      originY + H - 2,
-      { align: "right" },
+      originX + W - 2, originY + H - 2, { align: "right" },
     );
   };
 
@@ -2462,11 +3407,8 @@ export default function App({ superAdminMode = false }) {
           canvas.width = 200;
           canvas.height = 200;
           canvas.getContext("2d").drawImage(img, 0, 0);
-          doc.addImage(canvas.toDataURL("image/png"), "PNG", 58, 14, 30, 30);
-          doc.setFontSize(5);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(67, 56, 202);
-          doc.text("✓ VERIFIED", 73, 47, { align: "center" });
+          // QR placed in right column: x=57, y=13, 28×28mm
+          doc.addImage(canvas.toDataURL("image/png"), "PNG", 57, 13, 28, 28);
           doc.save(`meal-card-${tx.adm}.pdf`);
         };
         img.src = qrData.qr;
@@ -2480,12 +3422,20 @@ export default function App({ superAdminMode = false }) {
 
   const handlePrintAll = async () => {
     if (transactions.length === 0) return alert("No cards to print.");
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4",
-    });
-    const qrPromises = transactions.map(
+    await handlePrintBatch(transactions, "shule-meal-cards-all.pdf");
+  };
+
+  const handlePrintSelected = async () => {
+    if (selectedIds.size === 0) return alert("No students selected. Tick the checkboxes first.");
+    const selected = transactions.filter((tx) => selectedIds.has(tx.id));
+    await handlePrintBatch(selected, "shule-meal-cards-selected.pdf");
+    setSelectedIds(new Set());
+  };
+
+  const handlePrintBatch = (list, filename) => {
+    if (list.length === 0) return;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const qrPromises = list.map(
       (tx) =>
         new Promise((resolve) => {
           api(`/api/transactions/${tx.id}/qr`)
@@ -2495,8 +3445,7 @@ export default function App({ superAdminMode = false }) {
               const img = new Image();
               img.onload = () => {
                 const c = document.createElement("canvas");
-                c.width = 200;
-                c.height = 200;
+                c.width = 200; c.height = 200;
                 c.getContext("2d").drawImage(img, 0, 0);
                 resolve(c.toDataURL("image/png"));
               };
@@ -2507,24 +3456,15 @@ export default function App({ superAdminMode = false }) {
         }),
     );
     Promise.all(qrPromises).then((qrImages) => {
-      transactions.forEach((tx, i) => {
-        const perPage = 6,   // 3 rows × 2 cols on A4
-          pos = i % perPage;
+      list.forEach((tx, i) => {
+        const perPage = 6, pos = i % perPage;
         if (pos === 0 && i !== 0) doc.addPage();
-        const col = pos % 2,
-          row = Math.floor(pos / 2);
-        const x = 16.1 + col * 88.9,
-          y = 14 + row * 62;
+        const col = pos % 2, row = Math.floor(pos / 2);
+        const x = 16.1 + col * 88.9, y = 14 + row * 62;
         drawCard(doc, tx, x, y, session.schoolName);
-        if (qrImages[i]) {
-          doc.addImage(qrImages[i], "PNG", x + 58, y + 14, 30, 30);
-          doc.setFontSize(5);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(67, 56, 202);
-          doc.text("✓ VERIFIED", x + 73, y + 47, { align: "center" });
-        }
+        if (qrImages[i]) doc.addImage(qrImages[i], "PNG", x + 57, y + 13, 28, 28);
       });
-      doc.save("shule-meal-cards-all.pdf");
+      doc.save(filename);
     });
   };
 
@@ -2556,8 +3496,21 @@ export default function App({ superAdminMode = false }) {
       />
     );
 
+  // Accountant portal
+  if (session.role === "accountant")
+    return (
+      <AccountantDashboard
+        schoolName={session.schoolName}
+        user={session.username || "Accountant"}
+        onLogout={handleLogout}
+        subscription={subscription}
+      />
+    );
+
   // Admin portal
-  const dueDatePreview = calculateDueDate(form.durationWeeks);
+  const dueDatePreview = form.durationType === "days"
+    ? calculateDueDate(null, form.durationDays)
+    : calculateDueDate(form.durationWeeks);
 
   return (
     <>
@@ -2679,17 +3632,46 @@ export default function App({ superAdminMode = false }) {
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
                         Meal Plan Duration
                       </label>
-                      <select
-                        name="durationWeeks"
-                        value={form.durationWeeks}
-                        onChange={handleFormChange}
-                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                      >
-                        <option value="1">1 Week</option>
-                        <option value="2">2 Weeks</option>
-                        <option value="4">1 Month (4 Weeks)</option>
-                        <option value="12">1 Term (12 Weeks)</option>
-                      </select>
+                      {/* Toggle: Weeks / Days */}
+                      <div className="flex rounded-lg border border-gray-200 overflow-hidden mb-2">
+                        {["weeks", "days"].map((type) => (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setForm((p) => ({ ...p, durationType: type }))}
+                            className={`flex-1 py-1.5 text-sm font-semibold transition ${form.durationType === type ? "bg-indigo-600 text-white" : "bg-gray-50 text-gray-500 hover:bg-gray-100"}`}
+                          >
+                            {type === "weeks" ? "By Weeks" : "By Days"}
+                          </button>
+                        ))}
+                      </div>
+                      {form.durationType === "weeks" ? (
+                        <select
+                          name="durationWeeks"
+                          value={form.durationWeeks}
+                          onChange={handleFormChange}
+                          className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                        >
+                          <option value="1">1 Week (7 days)</option>
+                          <option value="2">2 Weeks (14 days)</option>
+                          <option value="4">1 Month (4 Weeks)</option>
+                          <option value="12">1 Term (12 Weeks)</option>
+                        </select>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            name="durationDays"
+                            value={form.durationDays}
+                            onChange={handleFormChange}
+                            min="1"
+                            max="365"
+                            placeholder="e.g. 30"
+                            className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-bold"
+                          />
+                          <span className="text-sm text-gray-500 whitespace-nowrap">days</span>
+                        </div>
+                      )}
                     </div>
                     <div className="bg-indigo-50 rounded-lg p-4 border border-indigo-100 flex items-start space-x-3">
                       <Calendar className="text-indigo-600 w-5 h-5 mt-0.5" />
@@ -2757,7 +3739,7 @@ export default function App({ superAdminMode = false }) {
                         {
                           transactions.filter((tx) => {
                             const diff =
-                              (new Date(tx.dueDate) - new Date()) /
+                              (parseLocalDate(tx.dueDate) - todayStart()) /
                               (1000 * 60 * 60 * 24);
                             return diff >= 0 && diff <= 7;
                           }).length
@@ -2773,18 +3755,51 @@ export default function App({ superAdminMode = false }) {
                       <FileText className="w-5 h-5 mr-2 text-indigo-500" />{" "}
                       Database Records
                     </h2>
-                    <button
-                      onClick={handlePrintAll}
-                      className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-4 py-2 rounded-lg transition"
-                    >
-                      <Printer className="w-4 h-4" /> Print All Cards
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {selectedIds.size > 0 && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-lg">
+                            {selectedIds.size} selected
+                          </span>
+                          <button
+                            onClick={handlePrintSelected}
+                            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-4 py-2 rounded-lg transition"
+                          >
+                            <Printer className="w-4 h-4" /> Print Selected
+                          </button>
+                          <button
+                            onClick={() => setSelectedIds(new Set())}
+                            className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-sm font-medium px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition"
+                          >
+                            <X className="w-4 h-4" /> Clear
+                          </button>
+                        </div>
+                      )}
+                      <button
+                        onClick={handlePrintAll}
+                        className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-bold px-4 py-2 rounded-lg transition"
+                      >
+                        <Printer className="w-4 h-4" /> Print All
+                      </button>
+                    </div>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
+                          <th className="py-3 px-4 w-10">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 rounded accent-indigo-600 cursor-pointer"
+                              checked={transactions.length > 0 && selectedIds.size === transactions.length}
+                              onChange={(e) =>
+                                setSelectedIds(e.target.checked ? new Set(transactions.map((t) => t.id)) : new Set())
+                              }
+                              title="Select all"
+                            />
+                          </th>
                           <th className="py-3 px-6 font-semibold">Student</th>
+                          <th className="py-3 px-6 font-semibold">Grade / Stream</th>
                           <th className="py-3 px-6 font-semibold">Amount</th>
                           <th className="py-3 px-6 font-semibold">Paid On</th>
                           <th className="py-3 px-6 font-semibold">Next Due</th>
@@ -2797,8 +3812,22 @@ export default function App({ superAdminMode = false }) {
                         {transactions.map((tx) => (
                           <tr
                             key={tx.id}
-                            className="border-b border-gray-100 hover:bg-gray-50 transition"
+                            className={`border-b border-gray-100 hover:bg-gray-50 transition ${selectedIds.has(tx.id) ? "bg-indigo-50/60" : ""}`}
                           >
+                            <td className="py-4 px-4 w-10">
+                              <input
+                                type="checkbox"
+                                className="w-4 h-4 rounded accent-indigo-600 cursor-pointer"
+                                checked={selectedIds.has(tx.id)}
+                                onChange={(e) => {
+                                  setSelectedIds((prev) => {
+                                    const next = new Set(prev);
+                                    e.target.checked ? next.add(tx.id) : next.delete(tx.id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </td>
                             <td className="py-4 px-6">
                               <p className="font-bold text-gray-900">
                                 {tx.studentName}
@@ -2806,6 +3835,15 @@ export default function App({ superAdminMode = false }) {
                               <p className="text-xs text-gray-500 font-medium">
                                 ADM: {tx.adm}
                               </p>
+                            </td>
+                            <td className="py-4 px-6">
+                              {tx.grade ? (
+                                <span className="inline-block px-2 py-1 rounded-md text-xs font-bold bg-indigo-50 text-indigo-700">
+                                  {tx.grade}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
                             </td>
                             <td className="py-4 px-6 font-bold text-gray-700">
                               KSh {tx.amount.toLocaleString()}
@@ -2815,46 +3853,68 @@ export default function App({ superAdminMode = false }) {
                             </td>
                             <td className="py-4 px-6">
                               <span
-                                className={`inline-block px-2 py-1 rounded-md text-xs font-bold ${new Date(tx.dueDate) >= new Date() ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
+                                className={`inline-block px-2 py-1 rounded-md text-xs font-bold ${parseLocalDate(tx.dueDate) >= todayStart() ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
                               >
                                 {tx.dueDate}
                               </span>
                             </td>
-                            <td className="py-4 px-6 text-center flex items-center justify-center gap-1">
-                              <button
-                                onClick={() => setPreviewCard(tx)}
-                                className="p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition"
-                                title="Print Card"
-                              >
-                                <Printer className="w-5 h-5" />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setRenewingTx(tx);
-                                  setRenewForm({
-                                    amount: "",
-                                    durationWeeks: "4",
-                                  });
-                                }}
-                                className="p-2 text-green-600 bg-green-50 hover:bg-green-100 rounded-lg transition"
-                                title="Renew"
-                              >
-                                <CheckCircle2 className="w-5 h-5" />
-                              </button>
-                              <button
-                                onClick={() => handleReplaceCard(tx)}
-                                className="p-2 text-orange-500 bg-orange-50 hover:bg-orange-100 rounded-lg transition"
-                                title="Replace Lost Card"
-                              >
-                                <ShieldCheck className="w-5 h-5" />
-                              </button>
-                              <button
-                                onClick={() => handleDelete(tx.id)}
-                                className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-lg transition"
-                                title="Delete"
-                              >
-                                <X className="w-5 h-5" />
-                              </button>
+                            <td className="py-4 px-6 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <Tooltip text="Print Card" color="indigo">
+                                  <button
+                                    onClick={() => setPreviewCard(tx)}
+                                    className="p-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition"
+                                  >
+                                    <Printer className="w-5 h-5" />
+                                  </button>
+                                </Tooltip>
+                                <Tooltip text="Renew Meal Plan" color="green">
+                                  <button
+                                    onClick={() => {
+                                      setRenewingTx(tx);
+                                      setRenewForm({ amount: "", durationWeeks: "4" });
+                                    }}
+                                    className="p-2 text-green-600 bg-green-50 hover:bg-green-100 rounded-lg transition"
+                                  >
+                                    <CheckCircle2 className="w-5 h-5" />
+                                  </button>
+                                </Tooltip>
+                                <Tooltip text="Replace Lost Card" color="orange">
+                                  <button
+                                    onClick={() => handleReplaceCard(tx)}
+                                    className="p-2 text-orange-500 bg-orange-50 hover:bg-orange-100 rounded-lg transition"
+                                  >
+                                    <ShieldCheck className="w-5 h-5" />
+                                  </button>
+                                </Tooltip>
+                                <Tooltip text="Pledge — parent pays later" color="amber">
+                                  <button
+                                    onClick={() => {
+                                      setPledgeTx(tx);
+                                      setPledgeForm({ pledgeAmount: "", durationWeeks: "4" });
+                                    }}
+                                    className="p-2 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-lg transition"
+                                  >
+                                    <span className="text-base font-bold leading-none">◆</span>
+                                  </button>
+                                </Tooltip>
+                                <Tooltip text="Special Case — scholarship / sponsorship" color="cyan">
+                                  <button
+                                    onClick={() => handleSpecialCase(tx)}
+                                    className="p-2 text-cyan-600 bg-cyan-50 hover:bg-cyan-100 rounded-lg transition"
+                                  >
+                                    <span className="text-base font-bold leading-none">★</span>
+                                  </button>
+                                </Tooltip>
+                                <Tooltip text="Archive — data preserved, restorable" color="red">
+                                  <button
+                                    onClick={() => handleDelete(tx.id)}
+                                    className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-lg transition"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
+                                </Tooltip>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -2872,6 +3932,77 @@ export default function App({ superAdminMode = false }) {
                     </table>
                   </div>
                 </div>
+              </div>
+
+              {/* Archived Students Panel */}
+              <div className="mt-6">
+                <button
+                  onClick={() => {
+                    if (!showArchived) fetchArchived();
+                    setShowArchived((v) => !v);
+                  }}
+                  className="flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700 transition"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {showArchived ? "Hide" : "Show"} Archived Students
+                  {archivedTransactions.length > 0 && (
+                    <span className="ml-1 bg-red-100 text-red-600 text-xs font-bold px-2 py-0.5 rounded-full">
+                      {archivedTransactions.length}
+                    </span>
+                  )}
+                </button>
+
+                {showArchived && (
+                  <div className="mt-4 bg-white rounded-xl shadow-sm border border-red-100 overflow-hidden">
+                    <div className="p-4 border-b border-red-100 bg-red-50 flex items-center gap-2">
+                      <Trash2 className="w-4 h-4 text-red-500" />
+                      <h3 className="font-bold text-red-700 text-sm">Archived Students</h3>
+                      <span className="text-xs text-red-500 ml-1">— hidden from dashboard, data preserved</span>
+                    </div>
+                    {archivedTransactions.length === 0 ? (
+                      <p className="p-6 text-center text-gray-400 text-sm">No archived records.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b border-gray-100">
+                              <th className="py-3 px-5 font-semibold">Student</th>
+                              <th className="py-3 px-5 font-semibold">ADM No.</th>
+                              <th className="py-3 px-5 font-semibold">Grade</th>
+                              <th className="py-3 px-5 font-semibold">Amount</th>
+                              <th className="py-3 px-5 font-semibold">Due Date</th>
+                              <th className="py-3 px-5 font-semibold text-center">Restore</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {archivedTransactions.map((tx) => (
+                              <tr key={tx.id} className="border-b border-gray-50 hover:bg-red-50/30 transition">
+                                <td className="py-3 px-5 font-semibold text-gray-700">{tx.studentName}</td>
+                                <td className="py-3 px-5 text-gray-500 text-sm font-mono">{tx.adm}</td>
+                                <td className="py-3 px-5">
+                                  {tx.grade
+                                    ? <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-indigo-50 text-indigo-700">{tx.grade}</span>
+                                    : <span className="text-xs text-gray-400">—</span>}
+                                </td>
+                                <td className="py-3 px-5 text-gray-600 font-bold text-sm">KSh {tx.amount?.toLocaleString()}</td>
+                                <td className="py-3 px-5 text-sm text-gray-500">{tx.dueDate}</td>
+                                <td className="py-3 px-5 text-center">
+                                  <button
+                                    onClick={() => handleRestore(tx.id)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition"
+                                    title="Restore to active dashboard"
+                                  >
+                                    <CheckCircle2 className="w-3.5 h-3.5" /> Restore
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2982,6 +4113,125 @@ export default function App({ superAdminMode = false }) {
                 className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-2 transition"
               >
                 <CheckCircle2 className="w-5 h-5" /> Confirm Renewal
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Pledge Modal */}
+      {pledgeTx && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50"
+          style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm relative">
+            <button
+              onClick={() => setPledgeTx(null)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-700"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-amber-500 text-xl font-bold">◆</span>
+              <h2 className="text-lg font-bold text-gray-800">Pledge Card</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-6">
+              {pledgeTx.studentName} — ADM: {pledgeTx.adm}
+            </p>
+            <form onSubmit={handlePledge} className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Amount Pledged (KSh)
+                </label>
+                <input
+                  type="number"
+                  value={pledgeForm.pledgeAmount}
+                  onChange={(e) =>
+                    setPledgeForm((p) => ({ ...p, pledgeAmount: e.target.value }))
+                  }
+                  placeholder="0.00"
+                  className="w-full px-4 py-2 bg-gray-50 border border-amber-200 rounded-lg focus:ring-2 focus:ring-amber-400 focus:outline-none font-bold"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Extend By
+                </label>
+                <select
+                  value={pledgeForm.durationWeeks}
+                  onChange={(e) =>
+                    setPledgeForm((p) => ({ ...p, durationWeeks: e.target.value }))
+                  }
+                  className="w-full px-4 py-2 bg-gray-50 border border-amber-200 rounded-lg focus:ring-2 focus:ring-amber-400 focus:outline-none"
+                >
+                  <option value="1">1 Week</option>
+                  <option value="2">2 Weeks</option>
+                  <option value="4">1 Month (4 Weeks)</option>
+                  <option value="12">1 Term (12 Weeks)</option>
+                </select>
+              </div>
+              <div className="bg-amber-50 rounded-lg p-3 border border-amber-100 text-sm text-amber-700">
+                Card valid until: <span className="font-bold">{calculateDueDate(pledgeForm.durationWeeks)}</span>. The pledged amount is due at a later date.
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-2 transition"
+              >
+                <span className="text-base">◆</span> Generate Pledge Card
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Special Case Modal */}
+      {specialTx && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50"
+          style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm relative">
+            <button
+              onClick={() => setSpecialTx(null)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-700"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-purple-500 text-xl font-bold">★</span>
+              <h2 className="text-lg font-bold text-gray-800">Special Case Card</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-1">
+              {specialTx.studentName} — ADM: {specialTx.adm}
+            </p>
+            <p className="text-xs text-gray-400 mb-6">Scholarship / Sponsorship / Donor-funded</p>
+            <form onSubmit={handleSpecialCaseSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Extend By
+                </label>
+                <select
+                  value={specialForm.durationWeeks}
+                  onChange={(e) =>
+                    setSpecialForm((p) => ({ ...p, durationWeeks: e.target.value }))
+                  }
+                  className="w-full px-4 py-2 bg-gray-50 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                >
+                  <option value="1">1 Week</option>
+                  <option value="2">2 Weeks</option>
+                  <option value="4">1 Month (4 Weeks)</option>
+                  <option value="12">1 Term (12 Weeks)</option>
+                </select>
+              </div>
+              <div className="bg-purple-50 rounded-lg p-3 border border-purple-100 text-sm text-purple-700">
+                Card valid until: <span className="font-bold">{calculateDueDate(specialForm.durationWeeks)}</span>
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-2 transition"
+              >
+                <span className="text-base">★</span> Generate Special Case Card
               </button>
             </form>
           </div>

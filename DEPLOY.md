@@ -1,94 +1,141 @@
 # ShuleMeal Cards — Production Deployment Guide
 
+## Prerequisites
+
+- **Node.js 20 LTS** (recommended — has prebuilt binaries for better-sqlite3)
+- Nginx + Certbot for SSL
+- PM2 for process management
+
+---
+
 ## 1. Generate secrets
 
 ```bash
-# Generate a strong JWT secret
-node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+cd backend
+npm run generate-secret   # copy the output as your JWT_SECRET
 ```
+
+---
 
 ## 2. Set up environment variables
 
 ```bash
 cp backend/.env.example backend/.env
-# Edit backend/.env with your real values:
-#   JWT_SECRET=<generated above>
-#   SUPER_ADMIN_PASSWORD=<strong password>
-#   ALLOWED_ORIGIN=https://yourdomain.com
-#   NODE_ENV=production
+nano backend/.env
 ```
 
-## 3. Build the frontend
+Fill in **all** of these — the server will refuse to start in production if any are missing:
+
+| Variable | Required | Description |
+|---|---|---|
+| `JWT_SECRET` | ✅ | 64-byte hex string from step 1 |
+| `SUPER_ADMIN_PASSWORD` | ✅ | Strong password (A-Z, 0-9, symbol) |
+| `ALLOWED_ORIGIN` | ✅ | Your exact domain, e.g. `https://shulemeal.yourdomain.com` |
+| `NODE_ENV` | ✅ | Set to `production` |
+| `SENDGRID_API_KEY` | Optional | For signup email notifications |
+
+---
+
+## 3. Install dependencies
 
 ```bash
+# Frontend
 npm install
-npm run build
-# Output is in ./dist — copy to your web server
+
+# Backend
+cd backend
+npm install   # postinstall script auto-downloads better-sqlite3 binary
 ```
 
-## 4. Install backend dependencies
-
+If you see `Could not locate the bindings file` after install:
 ```bash
 cd backend
-npm install --omit=dev
+node install-better-sqlite3.js
 ```
+
+---
+
+## 4. Build the frontend
+
+```bash
+# From project root
+npm run build
+# Output is in ./dist
+```
+
+---
 
 ## 5. Set up Nginx + SSL
 
 ```bash
-# Install Nginx and Certbot
 sudo apt install nginx certbot python3-certbot-nginx
 
-# Copy the example config
 sudo cp backend/nginx.conf.example /etc/nginx/sites-available/shulemeal
-# Edit it: replace yourdomain.com with your actual domain
-sudo nano /etc/nginx/sites-available/shulemeal
+sudo nano /etc/nginx/sites-available/shulemeal   # replace yourdomain.com
 
-# Enable the site
 sudo ln -s /etc/nginx/sites-available/shulemeal /etc/nginx/sites-enabled/
-
-# Get SSL certificate (free)
 sudo certbot --nginx -d yourdomain.com
-
-# Test and reload
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## 6. Run the backend with PM2 (keeps it alive after reboots)
+---
+
+## 6. Run the backend with PM2
 
 ```bash
 npm install -g pm2
 cd backend
 pm2 start server.js --name shulemeal
 pm2 save
-pm2 startup  # follow the printed command to enable on boot
+pm2 startup   # follow the printed command to enable on boot
 ```
+
+---
 
 ## 7. Set up automated daily backups
 
 ```bash
+# Test the backup script first
+cd backend
+node backup.js
+
 # Add to crontab (runs at 2am daily)
 crontab -e
-# Add this line:
+# Add this line (adjust path):
 0 2 * * * cd /path/to/backend && node backup.js >> /var/log/shulemeal-backup.log 2>&1
 ```
+
+---
 
 ## 8. Verify everything works
 
 ```bash
-# Check backend is running
-curl https://yourdomain.com/api/health
-
-# Check logs
-pm2 logs shulemeal
+curl https://yourdomain.com/api/health   # should return {"ok":true}
+pm2 logs shulemeal                        # check for errors
 ```
+
+---
 
 ## Security checklist before going live
 
-- [ ] JWT_SECRET is a random 64-byte hex string
-- [ ] SUPER_ADMIN_PASSWORD is strong and not the default
-- [ ] ALLOWED_ORIGIN is set to your exact domain
-- [ ] NODE_ENV=production
+- [ ] `JWT_SECRET` is a random 64-byte hex string (not the default)
+- [ ] `SUPER_ADMIN_PASSWORD` is strong and unique
+- [ ] `ALLOWED_ORIGIN` is set to your exact domain (not `*`)
+- [ ] `NODE_ENV=production`
 - [ ] SSL certificate is active (https works)
-- [ ] Backups are running (check /path/to/backend/backups/)
-- [ ] database.sqlite is NOT in a public web directory
+- [ ] Backups are running (`ls backend/backups/`)
+- [ ] `database.sqlite` is NOT in a public web directory
+- [ ] `backend/.env` is NOT committed to git (check `.gitignore`)
+- [ ] Root `server.js` has been deleted (done — was a security risk)
+
+---
+
+## Upgrading Node.js (if needed)
+
+If you're on Node 24 and see binary errors:
+```bash
+# Install Node 20 LTS via nvm
+nvm install 20
+nvm use 20
+cd backend && npm install
+```

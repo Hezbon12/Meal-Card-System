@@ -88,6 +88,12 @@ if (!SUPER_ADMIN_PASSWORD || SUPER_ADMIN_PASSWORD === "superadmin2026") {
     );
   }
 }
+if (process.env.NODE_ENV === "production" && (!ALLOWED_ORIGIN || ALLOWED_ORIGIN === "*")) {
+  console.error(
+    "FATAL: ALLOWED_ORIGIN must be set to your exact domain in production (e.g. https://yourdomain.com). Wildcard '*' is not allowed.",
+  );
+  process.exit(1);
+}
 
 const _JWT_SECRET = JWT_SECRET || "shulemeal-super-secret-change-in-production";
 const _SUPER_ADMIN_PASSWORD = SUPER_ADMIN_PASSWORD || "superadmin2026";
@@ -118,13 +124,18 @@ app.use(
       ALLOWED_ORIGIN === "*"
         ? "*"
         : ALLOWED_ORIGIN.split(",").map((s) => s.trim()),
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
 
 // Body parsing — limit payload size to prevent abuse
-app.use(express.json({ limit: "50kb" }));
+// Global limit is 50kb. The logo upload endpoint overrides this to 300kb.
+app.use((req, res, next) => {
+  const limit = req.path === "/api/templates/" + req.path.split("/")[3] + "/logo" ||
+                req.path.endsWith("/logo") ? "300kb" : "50kb";
+  express.json({ limit })(req, res, next);
+});
 
 // Middleware to verify request signature for sensitive operations
 function verifyRequestSignature(req, res, next) {
@@ -208,20 +219,64 @@ app.use("/api/", (req, res, next) => {
 });
 
 // ─── Database ─────────────────────────────────────────────────
-const sqlite3 = require("sqlite3").verbose();
-const db = new sqlite3.Database("./database.sqlite", (err) => {
-  if (err) console.error("❌ SQLite connection failed:", err.message);
-  else console.log("✅ Connected to SQLite: ./database.sqlite");
-});
+// Use better-sqlite3 (synchronous) wrapped in a sqlite3-compatible shim
+// so all existing db.run/db.get/db.all callback code works unchanged.
+const BetterSqlite3 = require("better-sqlite3");
+const _bsdb = new BetterSqlite3("./database.sqlite");
+console.log("✅ Connected to SQLite: ./database.sqlite");
 
-// Enable WAL mode for better concurrent read performance
-db.run("PRAGMA journal_mode=WAL;", (err) => {
-  if (err) console.error("Failed to set WAL mode:", err);
-});
+// Enable WAL mode and foreign keys synchronously
+_bsdb.pragma("journal_mode = WAL");
+_bsdb.pragma("foreign_keys = ON");
 
-db.run("PRAGMA foreign_keys=ON;", (err) => {
-  if (err) console.error("Failed to enable foreign keys:", err);
-});
+// Shim: expose db.run / db.get / db.all / db.serialize with the same
+// callback signatures as the sqlite3 package.
+const db = {
+  serialize(fn) { fn(); },
+
+  run(sql, params, callback) {
+    if (typeof params === "function") { callback = params; params = []; }
+    if (!Array.isArray(params)) params = params ? [params] : [];
+    try {
+      const stmt = _bsdb.prepare(sql);
+      const info = stmt.run(...params);
+      // Mimic sqlite3's `this` context inside the callback
+      if (typeof callback === "function") {
+        callback.call({ lastID: info.lastInsertRowid, changes: info.changes }, null);
+      }
+    } catch (err) {
+      if (typeof callback === "function") callback(err);
+      else if (!/duplicate column/i.test(err.message)) {
+        // Silently swallow expected migration errors; log others
+        console.error("db.run error:", err.message, "\nSQL:", sql);
+      }
+    }
+  },
+
+  get(sql, params, callback) {
+    if (typeof params === "function") { callback = params; params = []; }
+    if (!Array.isArray(params)) params = params ? [params] : [];
+    try {
+      const row = _bsdb.prepare(sql).get(...params);
+      if (typeof callback === "function") callback(null, row);
+    } catch (err) {
+      if (typeof callback === "function") callback(err, null);
+      else console.error("db.get error:", err.message, "\nSQL:", sql);
+    }
+  },
+
+  all(sql, params, callback) {
+    if (typeof params === "function") { callback = params; params = []; }
+    if (!Array.isArray(params)) params = params ? [params] : [];
+    try {
+      const rows = _bsdb.prepare(sql).all(...params);
+      if (typeof callback === "function") callback(null, rows);
+    } catch (err) {
+      if (typeof callback === "function") callback(err, []);
+      else console.error("db.all error:", err.message, "\nSQL:", sql);
+    }
+  },
+};
 
 const generateToken = () => crypto.randomBytes(16).toString("hex");
 
@@ -254,6 +309,11 @@ const initSchema = () => {
       dueDate TEXT NOT NULL,
       status TEXT DEFAULT 'Active',
       cardToken TEXT,
+      cardType TEXT DEFAULT 'standard',
+      pledgeAmount REAL,
+      paymentMode TEXT DEFAULT 'Cash',
+      mpesaRef TEXT,
+      refundReason TEXT,
       FOREIGN KEY(school_id) REFERENCES schools(id) ON DELETE CASCADE
     )`);
 
@@ -263,6 +323,7 @@ const initSchema = () => {
       adm TEXT,
       scanDate TEXT,
       mealDate TEXT,
+      mealType TEXT DEFAULT 'lunch',
       status TEXT,
       FOREIGN KEY(school_id) REFERENCES schools(id) ON DELETE CASCADE
     )`);
@@ -354,6 +415,13 @@ const initSchema = () => {
       `ALTER TABLE audit_log ADD COLUMN userAgent TEXT`,
       `ALTER TABLE audit_log ADD COLUMN userId TEXT`,
       `ALTER TABLE transactions ADD COLUMN grade TEXT`,
+      `ALTER TABLE scans ADD COLUMN mealType TEXT DEFAULT 'lunch'`,
+      `ALTER TABLE transactions ADD COLUMN cardType TEXT DEFAULT 'standard'`,
+      `ALTER TABLE transactions ADD COLUMN pledgeAmount REAL`,
+      `ALTER TABLE transactions ADD COLUMN paymentMode TEXT DEFAULT 'Cash'`,
+      `ALTER TABLE transactions ADD COLUMN mpesaRef TEXT`,
+      `ALTER TABLE transactions ADD COLUMN refundReason TEXT`,
+      `ALTER TABLE schools ADD COLUMN accountantPasswordHash TEXT`,
     ];
 
     migrations.forEach((sql) => {
@@ -897,23 +965,34 @@ app.post(
     .withMessage(
       "Teacher password must contain uppercase, number, and special character",
     ),
+  body("accountantPassword")
+    .optional()
+    .isLength({ min: 8 })
+    .withMessage("Accountant password must be at least 8 characters")
+    .matches(/^(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}$/)
+    .withMessage(
+      "Accountant password must contain uppercase, number, and special character",
+    ),
   validate,
   async (req, res) => {
-    const { name, username, adminPassword, teacherPassword } = req.body;
-    const [adminPasswordHash, teacherPasswordHash] = await Promise.all([
+    const { name, username, adminPassword, teacherPassword, accountantPassword } = req.body;
+    const hashes = await Promise.all([
       bcrypt.hash(adminPassword, 12),
       bcrypt.hash(teacherPassword, 12),
+      accountantPassword ? bcrypt.hash(accountantPassword, 12) : Promise.resolve(null),
     ]);
+    const [adminPasswordHash, teacherPasswordHash, accountantPasswordHash] = hashes;
     const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
       .toISOString()
       .split("T")[0];
     db.run(
-      `INSERT INTO schools (name, username, adminPasswordHash, teacherPasswordHash, plan, trialEndsAt) VALUES (?,?,?,?,?,?)`,
+      `INSERT INTO schools (name, username, adminPasswordHash, teacherPasswordHash, accountantPasswordHash, plan, trialEndsAt) VALUES (?,?,?,?,?,?,?)`,
       [
         name.trim(),
         username.trim().toLowerCase(),
         adminPasswordHash,
         teacherPasswordHash,
+        accountantPasswordHash,
         "trial",
         trialEndsAt,
       ],
@@ -957,9 +1036,17 @@ app.put(
     .withMessage(
       "Teacher password must contain uppercase, number, and special character",
     ),
+  body("accountantPassword")
+    .optional()
+    .isLength({ min: 8 })
+    .withMessage("Accountant password must be at least 8 characters")
+    .matches(/^(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}$/)
+    .withMessage(
+      "Accountant password must contain uppercase, number, and special character",
+    ),
   validate,
   async (req, res) => {
-    const { name, adminPassword, teacherPassword } = req.body;
+    const { name, adminPassword, teacherPassword, accountantPassword } = req.body;
     const fields = ["name = ?"];
     const values = [name.trim()];
     if (adminPassword) {
@@ -970,8 +1057,12 @@ app.put(
       fields.push("teacherPasswordHash = ?");
       values.push(await bcrypt.hash(teacherPassword, 12));
     }
+    if (accountantPassword) {
+      fields.push("accountantPasswordHash = ?");
+      values.push(await bcrypt.hash(accountantPassword, 12));
+    }
     // Stamp passwordChangedAt so existing tokens are invalidated
-    if (adminPassword || teacherPassword) {
+    if (adminPassword || teacherPassword || accountantPassword) {
       fields.push("passwordChangedAt = ?");
       values.push(new Date().toISOString());
     }
@@ -1109,7 +1200,7 @@ app.post(
   "/api/auth/login",
   body("username").trim().notEmpty().withMessage("Username is required"),
   body("password").notEmpty().withMessage("Password is required"),
-  body("role").optional().isIn(["admin", "teacher"]),
+  body("role").optional().isIn(["admin", "teacher", "accountant"]),
   validate,
   (req, res) => {
     const { username, password, role } = req.body;
@@ -1135,56 +1226,41 @@ app.post(
         [username.toLowerCase()],
         async (err, school) => {
           if (err) return res.status(500).json({ error: "Server error" });
-          // Always hash-compare even on miss to prevent timing attacks
           const dummyHash =
             "$2a$12$invalidhashfortimingprotection000000000000000000000000";
           const isTeacher = role === "teacher";
+          const isAccountant = role === "accountant";
           const hash = school
             ? isTeacher
               ? school.teacherPasswordHash
-              : school.adminPasswordHash
+              : isAccountant
+                ? (school.accountantPasswordHash || school.teacherPasswordHash)
+                : school.adminPasswordHash
             : dummyHash;
           const valid = await bcrypt.compare(password, hash || dummyHash);
 
           if (!school || !valid) {
-            // Record failed login attempt
             recordLoginAttempt(username.toLowerCase(), ipAddress, false);
-            logAudit(
-              "LOGIN_FAILED",
-              username.toLowerCase(),
-              "Invalid credentials",
-              req,
-            );
-            return res
-              .status(401)
-              .json({ error: "Invalid username or password" });
+            logAudit("LOGIN_FAILED", username.toLowerCase(), "Invalid credentials", req);
+            return res.status(401).json({ error: "Invalid username or password" });
           }
 
           if (!hash) {
             recordLoginAttempt(username.toLowerCase(), ipAddress, false);
-            return res.status(401).json({
-              error:
-                "Account not fully configured. Contact your administrator.",
-            });
+            return res.status(401).json({ error: "Account not fully configured. Contact your administrator." });
           }
 
-          // Record successful login
           recordLoginAttempt(username.toLowerCase(), ipAddress, true);
-          logAudit(
-            "LOGIN_SUCCESS",
-            username.toLowerCase(),
-            `Successful ${isTeacher ? "teacher" : "admin"} login`,
-            req,
-          );
+          const roleLabel = isTeacher ? "teacher" : isAccountant ? "accountant" : "admin";
+          logAudit("LOGIN_SUCCESS", username.toLowerCase(), `Successful ${roleLabel} login`, req);
 
-          const userRole = isTeacher ? "teacher" : "admin";
+          const userRole = isTeacher ? "teacher" : isAccountant ? "accountant" : "admin";
           const token = jwt.sign(
             { schoolId: school.id, role: userRole },
             _JWT_SECRET,
             { expiresIn: "12h" },
           );
 
-          // Generate refresh token for token rotation
           generateRefreshToken(school.id, (refreshErr, refreshTokenData) => {
             const response = {
               token,
@@ -1192,9 +1268,7 @@ app.post(
               role: userRole,
               subscription: getSubscriptionState(school),
             };
-            if (refreshTokenData) {
-              response.refreshToken = refreshTokenData.token;
-            }
+            if (refreshTokenData) response.refreshToken = refreshTokenData.token;
             res.json(response);
           });
         },
@@ -1271,7 +1345,7 @@ app.get(
   noCache,
   (req, res) => {
     db.all(
-      `SELECT id, studentName, adm, grade, amount, durationWeeks, paidDate, dueDate, status, cardToken FROM transactions WHERE school_id=? ORDER BY id DESC`,
+      `SELECT id, studentName, adm, grade, amount, durationWeeks, paidDate, dueDate, status, cardToken, cardType, pledgeAmount, paymentMode, mpesaRef FROM transactions WHERE school_id=? AND status != 'Archived' ORDER BY id DESC`,
       [req.school.schoolId],
       (err, rows) => {
         if (err)
@@ -1336,10 +1410,14 @@ app.post(
     const studentName = stripHtml(req.body.studentName);
     const adm = rawAdm.trim();
     const grade = req.body.grade ? stripHtml(String(req.body.grade)).trim().slice(0, 50) : null;
+    const cardType = ["standard", "pledge", "special"].includes(req.body.cardType) ? req.body.cardType : "standard";
+    const pledgeAmount = cardType === "pledge" && req.body.pledgeAmount ? parseFloat(req.body.pledgeAmount) : null;
+    const paymentMode = ["Cash", "M-Pesa", "Bank Deposit", "Cheque"].includes(req.body.paymentMode) ? req.body.paymentMode : "Cash";
+    const mpesaRef = req.body.mpesaRef ? stripHtml(String(req.body.mpesaRef)).trim().slice(0, 30) : null;
     const cardToken = generateToken();
 
     db.run(
-      `INSERT INTO transactions (school_id,studentName,adm,grade,amount,durationWeeks,paidDate,dueDate,status,cardToken) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO transactions (school_id,studentName,adm,grade,amount,durationWeeks,paidDate,dueDate,status,cardToken,cardType,pledgeAmount,paymentMode,mpesaRef) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         req.school.schoolId,
         studentName,
@@ -1351,6 +1429,10 @@ app.post(
         dueDate,
         status || "Active",
         cardToken,
+        cardType,
+        pledgeAmount,
+        paymentMode,
+        mpesaRef,
       ],
       function (err) {
         if (err)
@@ -1358,7 +1440,7 @@ app.post(
         logAudit(
           "TRANSACTION_CREATED",
           adm,
-          `Created transaction for ${studentName}`,
+          `Created transaction for ${studentName} (${cardType})`,
           req,
         );
         res.status(201).json({
@@ -1372,6 +1454,10 @@ app.post(
           dueDate,
           status,
           cardToken,
+          cardType,
+          pledgeAmount,
+          paymentMode,
+          mpesaRef,
         });
       },
     );
@@ -1416,13 +1502,59 @@ app.delete(
   (req, res) => {
     if (req.school.role !== "admin")
       return res.status(403).json({ error: "Forbidden" });
+    // Soft-delete: archive the record instead of destroying it.
+    // Data is preserved for financial records and scan history.
     db.run(
-      `DELETE FROM transactions WHERE id=? AND school_id=?`,
+      `UPDATE transactions SET status='Archived' WHERE id=? AND school_id=?`,
       [req.params.id, req.school.schoolId],
       function (err) {
-        if (err) return res.status(500).json({ error: "Delete failed" });
+        if (err) return res.status(500).json({ error: "Archive failed" });
         if (this.changes === 0)
           return res.status(404).json({ error: "Not found" });
+        logAudit("TRANSACTION_ARCHIVED", String(req.params.id), "Student record archived (soft delete)", req);
+        res.json({ success: true });
+      },
+    );
+  },
+);
+
+// ─── Get archived transactions ───────────────────────────────
+app.get(
+  "/api/transactions/archived",
+  requireAuth,
+  requireSubscription,
+  noCache,
+  (req, res) => {
+    if (req.school.role !== "admin")
+      return res.status(403).json({ error: "Forbidden" });
+    db.all(
+      `SELECT id, studentName, adm, grade, amount, paidDate, dueDate, cardType FROM transactions WHERE school_id=? AND status='Archived' ORDER BY id DESC`,
+      [req.school.schoolId],
+      (err, rows) => {
+        if (err) return res.status(500).json({ error: "Failed to fetch archived records" });
+        res.json(rows);
+      },
+    );
+  },
+);
+
+// ─── Restore archived transaction ────────────────────────────
+app.post(
+  "/api/transactions/:id/restore",  requireAuth,
+  requireSubscription,
+  param("id").isInt().withMessage("Invalid ID"),
+  validate,
+  (req, res) => {
+    if (req.school.role !== "admin")
+      return res.status(403).json({ error: "Forbidden" });
+    db.run(
+      `UPDATE transactions SET status='Active' WHERE id=? AND school_id=? AND status='Archived'`,
+      [req.params.id, req.school.schoolId],
+      function (err) {
+        if (err) return res.status(500).json({ error: "Restore failed" });
+        if (this.changes === 0)
+          return res.status(404).json({ error: "Not found or not archived" });
+        logAudit("TRANSACTION_RESTORED", String(req.params.id), "Student record restored from archive", req);
         res.json({ success: true });
       },
     );
@@ -1456,6 +1588,37 @@ app.post(
   },
 );
 
+// ─── Update card type (pledge / special / standard) ──────────
+app.patch(
+  "/api/transactions/:id/cardtype",
+  requireAuth,
+  requireSubscription,
+  param("id").isInt().withMessage("Invalid ID"),
+  body("cardType").isIn(["standard", "pledge", "special"]).withMessage("Invalid cardType"),
+  body("pledgeAmount").optional({ nullable: true }).isFloat({ min: 0 }).withMessage("Invalid pledge amount"),
+  body("dueDate").optional({ nullable: true }).isDate().withMessage("Invalid due date"),
+  validate,
+  (req, res) => {
+    if (req.school.role !== "admin")
+      return res.status(403).json({ error: "Forbidden" });
+    const { cardType } = req.body;
+    const pledgeAmount = cardType === "pledge" && req.body.pledgeAmount ? parseFloat(req.body.pledgeAmount) : null;
+    const fields = ["cardType=?", "pledgeAmount=?"];
+    const values = [cardType, pledgeAmount];
+    if (req.body.dueDate) { fields.push("dueDate=?"); values.push(req.body.dueDate); }
+    values.push(req.params.id, req.school.schoolId);
+    db.run(
+      `UPDATE transactions SET ${fields.join(", ")} WHERE id=? AND school_id=?`,
+      values,
+      function (err) {
+        if (err) return res.status(500).json({ error: "Update failed" });
+        if (this.changes === 0) return res.status(404).json({ error: "Not found" });
+        db.get(`SELECT * FROM transactions WHERE id=?`, [req.params.id], (err, row) => res.json(row));
+      },
+    );
+  },
+);
+
 // ─── Scan ─────────────────────────────────────────────────────
 app.post(
   "/api/scan",
@@ -1468,8 +1631,13 @@ app.post(
     .withMessage("Token must be a string")
     .matches(/^[a-f0-9]{32}$/)
     .withMessage("Invalid token format"),
+  body("mealType")
+    .optional()
+    .isIn(["tea", "lunch", "supper"])
+    .withMessage("mealType must be tea, lunch, or supper"),
   validate,
   (req, res) => {
+    const mealType = req.body.mealType || "lunch";
     db.get(
       `SELECT * FROM transactions WHERE cardToken=? AND school_id=?`,
       [req.body.token, req.school.schoolId],
@@ -1487,14 +1655,8 @@ app.post(
         // ── Subscription / expiry check ──────────────────────────
         if (row.dueDate < today) {
           db.run(
-            `INSERT INTO scans (school_id, adm, scanDate, mealDate, status) VALUES (?,?,?,?,?)`,
-            [
-              req.school.schoolId,
-              row.adm,
-              now.toISOString(),
-              today,
-              "REJECTED",
-            ],
+            `INSERT INTO scans (school_id, adm, scanDate, mealDate, mealType, status) VALUES (?,?,?,?,?,?)`,
+            [req.school.schoolId, row.adm, now.toISOString(), today, mealType, "REJECTED"],
           );
           const safeStudent = {
             studentName: row.studentName,
@@ -1508,24 +1670,20 @@ app.post(
           });
         }
 
-        // ── Double-dip check — already scanned today? ────────────
+        // ── Double-dip check — already scanned for this meal today? ──
         db.get(
-          `SELECT id FROM scans WHERE school_id=? AND adm=? AND mealDate=? AND status='APPROVED'`,
-          [req.school.schoolId, row.adm, today],
+          `SELECT id FROM scans WHERE school_id=? AND adm=? AND mealDate=? AND mealType=? AND status='APPROVED'`,
+          [req.school.schoolId, row.adm, today, mealType],
           (err2, existing) => {
             if (err2) return res.status(500).json({ error: "Scan failed" });
 
+            const mealLabels = { tea: "Tea Break", lunch: "Lunch", supper: "Supper" };
+            const mealLabel = mealLabels[mealType] || mealType;
+
             if (existing) {
-              // Already ate today — log the attempt and reject
               db.run(
-                `INSERT INTO scans (school_id, adm, scanDate, mealDate, status) VALUES (?,?,?,?,?)`,
-                [
-                  req.school.schoolId,
-                  row.adm,
-                  now.toISOString(),
-                  today,
-                  "DUPLICATE",
-                ],
+                `INSERT INTO scans (school_id, adm, scanDate, mealDate, mealType, status) VALUES (?,?,?,?,?,?)`,
+                [req.school.schoolId, row.adm, now.toISOString(), today, mealType, "DUPLICATE"],
               );
               const safeStudent = {
                 studentName: row.studentName,
@@ -1535,21 +1693,16 @@ app.post(
               return res.json({
                 valid: false,
                 duplicate: true,
-                message: `${row.studentName} already received a meal today.`,
+                mealType,
+                message: `${row.studentName} already received ${mealLabel} today.`,
                 student: safeStudent,
               });
             }
 
             // ── All clear — approve the meal ─────────────────────
             db.run(
-              `INSERT INTO scans (school_id, adm, scanDate, mealDate, status) VALUES (?,?,?,?,?)`,
-              [
-                req.school.schoolId,
-                row.adm,
-                now.toISOString(),
-                today,
-                "APPROVED",
-              ],
+              `INSERT INTO scans (school_id, adm, scanDate, mealDate, mealType, status) VALUES (?,?,?,?,?,?)`,
+              [req.school.schoolId, row.adm, now.toISOString(), today, mealType, "APPROVED"],
             );
             const safeStudent = {
               studentName: row.studentName,
@@ -1558,7 +1711,8 @@ app.post(
             };
             res.json({
               valid: true,
-              message: `Meal approved. Valid until ${row.dueDate}`,
+              mealType,
+              message: `${mealLabel} approved. Valid until ${row.dueDate}`,
               student: safeStudent,
             });
           },
@@ -1579,7 +1733,10 @@ app.get(
       `SELECT DATE(scanDate) as date, COUNT(*) as total,
       SUM(CASE WHEN status='APPROVED' THEN 1 ELSE 0 END) as approved,
       SUM(CASE WHEN status='REJECTED' THEN 1 ELSE 0 END) as rejected,
-      SUM(CASE WHEN status='DUPLICATE' THEN 1 ELSE 0 END) as duplicates
+      SUM(CASE WHEN status='DUPLICATE' THEN 1 ELSE 0 END) as duplicates,
+      SUM(CASE WHEN status='APPROVED' AND mealType='tea' THEN 1 ELSE 0 END) as tea,
+      SUM(CASE WHEN status='APPROVED' AND mealType='lunch' THEN 1 ELSE 0 END) as lunch,
+      SUM(CASE WHEN status='APPROVED' AND mealType='supper' THEN 1 ELSE 0 END) as supper
      FROM scans WHERE school_id=? GROUP BY DATE(scanDate) ORDER BY date DESC`,
       [req.school.schoolId],
       (err, rows) => {
@@ -1598,13 +1755,301 @@ app.get(
   noCache,
   (req, res) => {
     db.all(
-      `SELECT s.id, s.adm, s.scanDate, s.status, t.studentName
+      `SELECT s.id, s.adm, s.scanDate, s.status, s.mealType, t.studentName, t.grade
      FROM scans s LEFT JOIN transactions t ON s.adm=t.adm AND t.school_id=s.school_id
      WHERE s.school_id=? ORDER BY s.id DESC LIMIT 200`,
       [req.school.schoolId],
       (err, rows) => {
         if (err)
           return res.status(500).json({ error: "Failed to fetch scans" });
+        res.json(rows);
+      },
+    );
+  },
+);
+
+// ─── Accountant API endpoints ────────────────────────────────
+
+// Financial summary
+app.get("/api/accountant/summary", requireAuth, requireSubscription, noCache, (req, res) => {
+  if (!["admin", "accountant"].includes(req.school.role))
+    return res.status(403).json({ error: "Forbidden" });
+  const today = new Date().toISOString().split("T")[0];
+  db.get(
+    `SELECT
+      SUM(CASE WHEN status != 'Archived' AND amount > 0 THEN amount ELSE 0 END) as totalRevenue,
+      SUM(CASE WHEN paidDate = ? AND status != 'Archived' AND amount > 0 THEN amount ELSE 0 END) as todayRevenue,
+      COUNT(CASE WHEN status = 'Active' AND dueDate >= ? THEN 1 END) as activeCards,
+      COUNT(CASE WHEN status != 'Archived' AND dueDate < ? THEN 1 END) as expiredCards,
+      COUNT(CASE WHEN status != 'Archived' AND amount < 0 THEN 1 END) as refunds,
+      SUM(CASE WHEN status != 'Archived' AND amount < 0 THEN amount ELSE 0 END) as totalRefunds
+    FROM transactions WHERE school_id=?`,
+    [today, today, today, req.school.schoolId],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: "Failed to fetch summary" });
+      // Today's approved meal scans
+      db.get(
+        `SELECT COUNT(*) as todayMeals FROM scans WHERE school_id=? AND mealDate=? AND status='APPROVED'`,
+        [req.school.schoolId, today],
+        (err2, scans) => {
+          res.json({ ...row, todayMeals: scans?.todayMeals || 0 });
+        }
+      );
+    }
+  );
+});
+
+// Payments with date range filter
+app.get("/api/accountant/payments", requireAuth, requireSubscription, noCache, (req, res) => {
+  if (!["admin", "accountant"].includes(req.school.role))
+    return res.status(403).json({ error: "Forbidden" });
+  const { from, to } = req.query;
+  let sql = `SELECT id, studentName, adm, grade, amount, paidDate, dueDate, paymentMode, mpesaRef, cardType, status, refundReason
+             FROM transactions WHERE school_id=? AND status != 'Archived'`;
+  const params = [req.school.schoolId];
+  if (from) { sql += ` AND paidDate >= ?`; params.push(from); }
+  if (to)   { sql += ` AND paidDate <= ?`; params.push(to); }
+  sql += ` ORDER BY paidDate DESC, id DESC`;
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: "Failed to fetch payments" });
+    res.json(rows);
+  });
+});
+
+// Defaulters (expired cards)
+app.get("/api/accountant/defaulters", requireAuth, requireSubscription, noCache, (req, res) => {
+  if (!["admin", "accountant"].includes(req.school.role))
+    return res.status(403).json({ error: "Forbidden" });
+  const today = new Date().toISOString().split("T")[0];
+  db.all(
+    `SELECT id, studentName, adm, grade, amount, dueDate, paymentMode, cardType
+     FROM transactions WHERE school_id=? AND status='Active' AND dueDate < ?
+     ORDER BY dueDate ASC`,
+    [req.school.schoolId, today],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: "Failed to fetch defaulters" });
+      res.json(rows);
+    }
+  );
+});
+
+// Top-up / extend card
+app.post(
+  "/api/accountant/topup",
+  requireAuth,
+  requireSubscription,
+  body("adm").trim().notEmpty().withMessage("Admission number required"),
+  body("amount").isFloat({ min: 1 }).withMessage("Amount must be positive"),
+  body("dueDate").isDate().withMessage("Invalid due date"),
+  body("paymentMode").isIn(["Cash", "M-Pesa", "Bank Deposit", "Cheque"]).withMessage("Invalid payment mode"),
+  body("mpesaRef").optional({ checkFalsy: true }).isString().isLength({ max: 30 }),
+  validate,
+  (req, res) => {
+    if (!["admin", "accountant"].includes(req.school.role))
+      return res.status(403).json({ error: "Forbidden" });
+    const { adm, amount, dueDate, paymentMode, mpesaRef } = req.body;
+    const paidDate = new Date().toISOString().split("T")[0];
+    db.get(
+      `SELECT * FROM transactions WHERE adm=? AND school_id=? AND status != 'Archived' ORDER BY id DESC LIMIT 1`,
+      [adm.trim(), req.school.schoolId],
+      (err, tx) => {
+        if (err || !tx) return res.status(404).json({ error: "Student not found" });
+        db.run(
+          `UPDATE transactions SET amount=amount+?, dueDate=?, status='Active', paymentMode=?, mpesaRef=?, paidDate=? WHERE id=? AND school_id=?`,
+          [parseFloat(amount), dueDate, paymentMode, mpesaRef || null, paidDate, tx.id, req.school.schoolId],
+          function(err2) {
+            if (err2) return res.status(500).json({ error: "Top-up failed" });
+            logAudit("TOPUP", adm, `Top-up KSh ${amount} via ${paymentMode}${mpesaRef ? " ref:" + mpesaRef : ""}`, req);
+            db.get(`SELECT * FROM transactions WHERE id=?`, [tx.id], (e, row) => res.json(row));
+          }
+        );
+      }
+    );
+  }
+);
+
+// Refund / negative transaction
+app.post(
+  "/api/accountant/refund",
+  requireAuth,
+  requireSubscription,
+  body("adm").trim().notEmpty().withMessage("Admission number required"),
+  body("amount").isFloat({ min: 1 }).withMessage("Refund amount must be positive"),
+  body("reason").trim().notEmpty().isLength({ max: 200 }).withMessage("Reason is required"),
+  validate,
+  (req, res) => {
+    if (!["admin", "accountant"].includes(req.school.role))
+      return res.status(403).json({ error: "Forbidden" });
+    const { adm, amount, reason } = req.body;
+    const paidDate = new Date().toISOString().split("T")[0];
+    const today = paidDate;
+    db.get(
+      `SELECT * FROM transactions WHERE adm=? AND school_id=? AND status != 'Archived' ORDER BY id DESC LIMIT 1`,
+      [adm.trim(), req.school.schoolId],
+      (err, tx) => {
+        if (err || !tx) return res.status(404).json({ error: "Student not found" });
+        const cardToken = generateToken();
+        db.run(
+          `INSERT INTO transactions (school_id,studentName,adm,grade,amount,paidDate,dueDate,status,cardToken,cardType,paymentMode,refundReason)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [req.school.schoolId, tx.studentName, tx.adm, tx.grade, -Math.abs(parseFloat(amount)),
+           paidDate, today, "Refund", cardToken, "standard", "Refund", stripHtml(reason)],
+          function(err2) {
+            if (err2) return res.status(500).json({ error: "Refund failed" });
+            logAudit("REFUND", adm, `Refund KSh ${amount} — ${reason}`, req);
+            res.json({ success: true, refundId: this.lastID });
+          }
+        );
+      }
+    );
+  }
+);
+
+// Meal attendance — dates with student counts
+app.get("/api/accountant/meal-attendance", requireAuth, requireSubscription, noCache, (req, res) => {
+  if (!["admin", "accountant"].includes(req.school.role))
+    return res.status(403).json({ error: "Forbidden" });
+  const { date } = req.query;
+  if (date) {
+    // Return students for a specific date — use subquery to avoid duplicate rows from multiple transactions
+    db.all(
+      `SELECT
+        t.studentName, t.adm, t.grade,
+        MAX(CASE WHEN s.mealType='tea'    AND s.status='APPROVED' THEN 1 ELSE 0 END) as tea,
+        MAX(CASE WHEN s.mealType='lunch'  AND s.status='APPROVED' THEN 1 ELSE 0 END) as lunch,
+        MAX(CASE WHEN s.mealType='supper' AND s.status='APPROVED' THEN 1 ELSE 0 END) as supper,
+        SUM(CASE WHEN s.status='APPROVED' THEN 1 ELSE 0 END) as totalMeals
+       FROM scans s
+       JOIN (
+         SELECT adm, studentName, grade, school_id
+         FROM transactions
+         WHERE school_id=? AND status != 'Archived'
+         GROUP BY adm
+       ) t ON s.adm = t.adm AND s.school_id = t.school_id
+       WHERE s.school_id=? AND s.mealDate=?
+       GROUP BY s.adm
+       ORDER BY t.studentName ASC`,
+      [req.school.schoolId, req.school.schoolId, date],
+      (err, rows) => {
+        if (err) {
+          console.error("meal-attendance date query error:", err.message);
+          return res.status(500).json({ error: "Failed to fetch attendance" });
+        }
+        res.json(rows);
+      }
+    );
+  } else {
+    // Return summary per date — only dates that have scans
+    db.all(
+      `SELECT
+        mealDate as date,
+        COUNT(DISTINCT adm) as studentCount,
+        SUM(CASE WHEN mealType='tea'    AND status='APPROVED' THEN 1 ELSE 0 END) as tea,
+        SUM(CASE WHEN mealType='lunch'  AND status='APPROVED' THEN 1 ELSE 0 END) as lunch,
+        SUM(CASE WHEN mealType='supper' AND status='APPROVED' THEN 1 ELSE 0 END) as supper,
+        SUM(CASE WHEN status='APPROVED' THEN 1 ELSE 0 END) as totalMeals
+       FROM scans
+       WHERE school_id=? AND mealDate IS NOT NULL AND mealDate != ''
+       GROUP BY mealDate
+       ORDER BY mealDate DESC`,
+      [req.school.schoolId],
+      (err, rows) => {
+        if (err) {
+          console.error("meal-attendance summary query error:", err.message);
+          return res.status(500).json({ error: "Failed to fetch attendance" });
+        }
+        res.json(rows);
+      }
+    );
+  }
+});
+
+// Meal attendance CSV export for a specific date
+app.get("/api/accountant/meal-attendance/export-csv", requireAuth, requireSubscription, (req, res) => {
+  if (!["admin", "accountant"].includes(req.school.role))
+    return res.status(403).json({ error: "Forbidden" });
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: "Date required" });
+  db.all(
+    `SELECT
+      t.studentName, t.adm, t.grade,
+      MAX(CASE WHEN s.mealType='tea'    AND s.status='APPROVED' THEN 1 ELSE 0 END) as tea,
+      MAX(CASE WHEN s.mealType='lunch'  AND s.status='APPROVED' THEN 1 ELSE 0 END) as lunch,
+      MAX(CASE WHEN s.mealType='supper' AND s.status='APPROVED' THEN 1 ELSE 0 END) as supper,
+      SUM(CASE WHEN s.status='APPROVED' THEN 1 ELSE 0 END) as totalMeals
+     FROM scans s
+     JOIN (
+       SELECT adm, studentName, grade, school_id
+       FROM transactions
+       WHERE school_id=? AND status != 'Archived'
+       GROUP BY adm
+     ) t ON s.adm = t.adm AND s.school_id = t.school_id
+     WHERE s.school_id=? AND s.mealDate=?
+     GROUP BY s.adm
+     ORDER BY t.studentName ASC`,
+    [req.school.schoolId, req.school.schoolId, date],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: "Export failed" });
+      const headers = ["Student Name", "Adm No.", "Grade/Stream", "Tea Break", "Lunch", "Supper", "Total Meals"];
+      const csvRows = rows.map(r => [
+        `"${r.studentName}"`, r.adm, `"${r.grade || ""}"`,
+        r.tea ? "Yes" : "No", r.lunch ? "Yes" : "No", r.supper ? "Yes" : "No", r.totalMeals
+      ].join(","));
+      const csv = [headers.join(","), ...csvRows].join("\n");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="attendance-${date}.csv"`);
+      res.send(csv);
+    }
+  );
+});
+
+// CSV export
+app.get("/api/accountant/export-csv", requireAuth, requireSubscription, (req, res) => {
+  if (!["admin", "accountant"].includes(req.school.role))
+    return res.status(403).json({ error: "Forbidden" });
+  const { from, to } = req.query;
+  let sql = `SELECT id, studentName, adm, grade, amount, paidDate, dueDate, paymentMode, mpesaRef, cardType, status, refundReason
+             FROM transactions WHERE school_id=? AND status != 'Archived'`;
+  const params = [req.school.schoolId];
+  if (from) { sql += ` AND paidDate >= ?`; params.push(from); }
+  if (to)   { sql += ` AND paidDate <= ?`; params.push(to); }
+  sql += ` ORDER BY paidDate DESC, id DESC`;
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: "Export failed" });
+    const headers = ["ID","Student Name","Adm No.","Grade","Amount (KSh)","Paid Date","Due Date","Payment Mode","M-Pesa Ref","Card Type","Status","Refund Reason"];
+    const csvRows = rows.map(r => [
+      r.id, `"${r.studentName}"`, r.adm, `"${r.grade||""}"`, r.amount,
+      r.paidDate, r.dueDate, r.paymentMode||"Cash", r.mpesaRef||"",
+      r.cardType||"standard", r.status, `"${r.refundReason||""}"`
+    ].join(","));
+    const csv = [headers.join(","), ...csvRows].join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="payments-export.csv"`);
+    res.send(csv);
+  });
+});
+
+// ─── Per-student meal breakdown ───────────────────────────────
+app.get(
+  "/api/scans/student-breakdown",
+  requireAuth,
+  requireSubscription,
+  noCache,
+  (req, res) => {
+    db.all(
+      `SELECT t.adm, t.studentName, t.grade,
+        SUM(CASE WHEN s.status='APPROVED' AND s.mealType='tea'    THEN 1 ELSE 0 END) as tea,
+        SUM(CASE WHEN s.status='APPROVED' AND s.mealType='lunch'  THEN 1 ELSE 0 END) as lunch,
+        SUM(CASE WHEN s.status='APPROVED' AND s.mealType='supper' THEN 1 ELSE 0 END) as supper,
+        SUM(CASE WHEN s.status='APPROVED' THEN 1 ELSE 0 END) as totalMeals
+       FROM transactions t
+       LEFT JOIN scans s ON s.adm=t.adm AND s.school_id=t.school_id
+       WHERE t.school_id=?
+       GROUP BY t.adm, t.studentName, t.grade
+       ORDER BY t.studentName ASC`,
+      [req.school.schoolId],
+      (err, rows) => {
+        if (err) return res.status(500).json({ error: "Failed to fetch breakdown" });
         res.json(rows);
       },
     );
@@ -1919,14 +2364,27 @@ app.post(
 
         // Logo should be sent as base64 in request body
         const { logoData } = req.body;
-        if (!logoData || !logoData.startsWith("data:image/")) {
+        if (!logoData || typeof logoData !== "string") {
+          return res.status(400).json({ error: "Invalid logo data." });
+        }
+
+        // Validate MIME type — only allow common image formats
+        const allowedTypes = ["data:image/png;", "data:image/jpeg;", "data:image/jpg;", "data:image/gif;", "data:image/webp;", "data:image/svg+xml;"];
+        if (!allowedTypes.some(t => logoData.startsWith(t))) {
           return res.status(400).json({
-            error: "Invalid logo data. Please provide base64 encoded image.",
+            error: "Invalid image type. Allowed: PNG, JPEG, GIF, WebP, SVG.",
           });
         }
 
-        // Extract the base64 part and store it
+        // Enforce 200KB file size limit (base64 is ~33% larger than binary)
+        const MAX_SIZE_BYTES = 200 * 1024; // 200KB
         const base64Data = logoData.split(",")[1] || logoData;
+        const approxBytes = Math.ceil(base64Data.length * 0.75);
+        if (approxBytes > MAX_SIZE_BYTES) {
+          return res.status(413).json({
+            error: `Logo too large (${Math.round(approxBytes / 1024)}KB). Maximum allowed size is 200KB.`,
+          });
+        }
         const logoPath = `/uploads/logos/school_${req.school.schoolId}_template_${templateId}_${Date.now()}.png`;
 
         db.run(
