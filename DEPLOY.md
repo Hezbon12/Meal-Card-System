@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- **Node.js 20 LTS** (recommended — has prebuilt binaries for better-sqlite3)
+- **Node.js 20 LTS** (recommended)
+- **PostgreSQL 14+** (local, Supabase, Railway, Render, or any managed PG)
 - Nginx + Certbot for SSL
 - PM2 for process management
 
@@ -31,8 +32,15 @@ Fill in **all** of these — the server will refuse to start in production if an
 | `JWT_SECRET` | ✅ | 64-byte hex string from step 1 |
 | `SUPER_ADMIN_PASSWORD` | ✅ | Strong password (A-Z, 0-9, symbol) |
 | `ALLOWED_ORIGIN` | ✅ | Your exact domain, e.g. `https://shulemeal.yourdomain.com` |
+| `DATABASE_URL` | ✅ | PostgreSQL connection string |
 | `NODE_ENV` | ✅ | Set to `production` |
 | `SENDGRID_API_KEY` | Optional | For signup email notifications |
+
+**PostgreSQL options:**
+- **Local:** `postgresql://postgres:password@localhost:5432/shulemeal`
+- **Supabase (free tier):** Copy connection string from project settings
+- **Railway:** Copy from Railway dashboard
+- **Render:** Copy from Render database dashboard
 
 ---
 
@@ -44,13 +52,7 @@ npm install
 
 # Backend
 cd backend
-npm install   # postinstall script auto-downloads better-sqlite3 binary
-```
-
-If you see `Could not locate the bindings file` after install:
-```bash
-cd backend
-node install-better-sqlite3.js
+npm install
 ```
 
 ---

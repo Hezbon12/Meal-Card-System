@@ -7,6 +7,25 @@ body {
   padding: 0;
 }
 
+/* All buttons and links show a pointer cursor */
+button,
+a,
+[role="button"],
+select,
+input[type="checkbox"],
+input[type="radio"],
+input[type="submit"],
+input[type="reset"],
+label[for] {
+  cursor: pointer;
+}
+
+/* Disabled buttons revert to default */
+button:disabled,
+input:disabled {
+  cursor: not-allowed;
+}
+
 .print-only {
   display: none;
 }

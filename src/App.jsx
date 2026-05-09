@@ -962,9 +962,12 @@ function QRScannerTab() {
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const rafRef = useRef(null);
+  const frameCountRef = useRef(0);
+  const processingRef = useRef(false); // prevent double-scan
   const [scanResult, setScanResult] = useState(null);
-  const [error, setError] = useState(null);
   const [scanning, setScanning] = useState(false);
+  const [verifying, setVerifying] = useState(false); // show instant feedback
+  const [error, setError] = useState(null);
   const [mealType, setMealType] = useState("lunch");
 
   const MEAL_LABELS = { tea: "Tea Break", lunch: "Lunch", supper: "Supper" };
@@ -973,18 +976,19 @@ function QRScannerTab() {
   const startCamera = async () => {
     setError(null);
     setScanResult(null);
+    setVerifying(false);
+    processingRef.current = false;
+    frameCountRef.current = 0;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
       });
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
       videoRef.current.play();
       setScanning(true);
     } catch {
-      setError(
-        "Camera access denied. Please allow camera permission and try again.",
-      );
+      setError("Camera access denied. Please allow camera permission and try again.");
     }
   };
 
@@ -999,27 +1003,40 @@ function QRScannerTab() {
 
   useEffect(() => {
     if (!scanning) return;
-    const canvas = canvasRef.current,
-      video = videoRef.current,
-      ctx = canvas.getContext("2d");
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    // willReadFrequently: true — tells browser to optimise for repeated getImageData calls
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
     const tick = () => {
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const code = jsQR(
-          ctx.getImageData(0, 0, canvas.width, canvas.height).data,
-          canvas.width,
-          canvas.height,
-        );
-        if (code) {
-          stopCamera();
-          verifyCard(code.data);
-          return;
-        }
-      }
+      if (processingRef.current) return; // already found a code, stop looping
       rafRef.current = requestAnimationFrame(tick);
+
+      if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+      // Only run jsQR every 3rd frame (~20fps) — reduces CPU load significantly
+      frameCountRef.current++;
+      if (frameCountRef.current % 3 !== 0) return;
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const code = jsQR(
+        ctx.getImageData(0, 0, canvas.width, canvas.height).data,
+        canvas.width,
+        canvas.height,
+        { inversionAttempts: "dontInvert" }, // faster — skip inverted QR attempt
+      );
+
+      if (code) {
+        processingRef.current = true;
+        cancelAnimationFrame(rafRef.current);
+        stopCamera();
+        verifyCard(code.data);
+      }
     };
+
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
   }, [scanning]);
@@ -1030,13 +1047,19 @@ function QRScannerTab() {
     try {
       const payload = JSON.parse(text);
       if (!payload.token) throw new Error("Invalid QR");
+
+      // Show instant "verifying" state so the screen changes immediately
+      setVerifying(true);
+
       const res = await api("/api/scan", {
         method: "POST",
         body: JSON.stringify({ token: payload.token, mealType }),
       });
       const data = await res.json();
+      setVerifying(false);
       setScanResult(data);
     } catch {
+      setVerifying(false);
       setScanResult({
         valid: false,
         message: "Invalid QR code — not a ShuleMeal card.",
@@ -1072,7 +1095,16 @@ function QRScannerTab() {
         </div>
       </div>
 
-      {!scanResult && (
+      {/* Instant verifying state — shows immediately when QR is detected */}
+      {verifying && (
+        <div className="w-full p-10 rounded-2xl shadow-sm border border-indigo-200 bg-indigo-50 text-center flex flex-col items-center gap-4">
+          <div className="w-16 h-16 rounded-full border-4 border-indigo-600 border-t-transparent animate-spin" />
+          <p className="text-lg font-bold text-indigo-700">Verifying card…</p>
+          <p className="text-sm text-indigo-500">{MEAL_LABELS[mealType]}</p>
+        </div>
+      )}
+
+      {!scanResult && !verifying && (
         <div className="w-full bg-white rounded-2xl shadow-sm border border-gray-200 p-4 flex flex-col items-center gap-4">
           <div
             className="relative w-full rounded-xl overflow-hidden bg-black"
