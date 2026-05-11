@@ -103,7 +103,7 @@ app.use(cors({
 }));
 
 app.use((req, res, next) => {
-  const limit = req.path === "/api/templates/" + req.path.split("/")[3] + "/logo" || req.path.endsWith("/logo") ? "300kb" : "50kb";
+  const limit = req.path === "/api/templates/" + req.path.split("/")[3] + "/logo" || req.path.endsWith("/logo") ? "300kb" : "7mb";
   express.json({ limit })(req, res, next);
 });
 
@@ -383,6 +383,68 @@ app.post("/api/transactions", requireAuth, requireSubscription, body("studentNam
       res.status(201).json({ id: this.lastID, studentName, adm, grade, amount, durationWeeks, paidDate, dueDate, status, cardToken, cardType, pledgeAmount, paymentMode, mpesaRef });
     }
   );
+});
+
+// ─── ADMIN: Bulk Import Students from CSV ─────────────────────
+app.post("/api/transactions/bulk", requireAuth, requireSubscription, (req, res) => {
+  if (req.school.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+  
+  const students = req.body.students;
+  if (!students || !Array.isArray(students)) return res.status(400).json({ error: "Invalid data format" });
+
+  let addedCount = 0;
+  let skippedCount = 0;
+  const paidDate = new Date().toISOString().split("T")[0];
+
+  // Process the array recursively to prevent locking the database
+  const processNext = (index) => {
+    if (index >= students.length) {
+      logAudit("BULK_IMPORT", "Multiple", `Successfully imported ${addedCount} students`, req);
+      return res.json({ success: true, added: addedCount, skipped: skippedCount });
+    }
+
+    const row = students[index];
+    const admRaw = row.adm ? String(row.adm).trim() : "";
+    const nameRaw = row.studentName ? String(row.studentName).trim() : "";
+    const gradeRaw = row.grade ? stripHtml(String(row.grade)).trim() : null;
+    const amount = parseFloat(row.amount) || 0;
+    const duration = parseInt(row.durationWeeks) || 12; // Default 1 term (12 weeks)
+
+    if (!admRaw || !nameRaw) {
+      skippedCount++;
+      return processNext(index + 1);
+    }
+
+    const encryptedAdm = encrypt(admRaw);
+    
+    // Check if student ADM already exists
+    db.get(`SELECT id FROM transactions WHERE adm=? AND school_id=? AND status != 'Archived'`,[encryptedAdm, req.school.schoolId], (err, existing) => {
+      if (existing) {
+        skippedCount++; // Skip duplicates
+        return processNext(index + 1);
+      }
+
+      // Calculate due date
+      const d = new Date();
+      d.setDate(d.getDate() + duration * 7);
+      const dueDate = d.toISOString().split("T")[0];
+
+      const cardToken = generateToken();
+
+      // Insert securely
+      db.run(
+        `INSERT INTO transactions (school_id, studentName, adm, grade, amount, durationWeeks, paidDate, dueDate, status, cardToken, cardType, paymentMode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,[req.school.schoolId, encrypt(stripHtml(nameRaw)), encryptedAdm, gradeRaw, amount, duration, paidDate, dueDate, "Active", cardToken, "standard", "Bank Deposit"],
+        (err2) => {
+          if (!err2) addedCount++;
+          else skippedCount++;
+          
+          processNext(index + 1); // Move to next student
+        }
+      );
+    });
+  };
+
+  processNext(0); // Start the loop
 });
 
 app.put("/api/transactions/:id", requireAuth, requireSubscription, (req, res) => {
