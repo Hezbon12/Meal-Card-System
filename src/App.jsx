@@ -4036,18 +4036,23 @@ export default function App({ superAdminMode = false }) {
 
   const handleLogPayment = async (e) => {
     e.preventDefault();
-    if (!form.studentName || !form.adm || !form.amount)
-      return alert("Please fill all fields");
-    if (
-      form.durationType === "days" &&
-      (!form.durationDays || parseInt(form.durationDays) < 1)
-    )
+    // Required field checks
+    if (!form.studentName.trim()) return alert("Student Name is required.");
+    if (!form.adm.trim()) return alert("Admission Number is required.");
+    if (!form.grade.trim()) return alert("Class / Grade / Stream is required.");
+    if (form.amount === "" || form.amount === null) return alert("Amount Paid is required.");
+    // ADM format: only alphanumeric, hyphens, underscores
+    if (!/^[a-zA-Z0-9\-_]+$/.test(form.adm.trim())) return alert("Admission Number may only contain letters, numbers, hyphens and underscores.");
+    // Amount must be 0 or positive
+    const amount = parseFloat(form.amount);
+    if (isNaN(amount) || amount < 0) return alert("Amount Paid cannot be negative.");
+    // Duration check
+    if (form.durationType === "days" && (!form.durationDays || parseInt(form.durationDays) < 1))
       return alert("Please enter a valid number of days (minimum 1).");
-    const duplicate = transactions.find((tx) => tx.adm === form.adm);
+    // Duplicate ADM check (case-insensitive)
+    const duplicate = transactions.find((tx) => tx.adm.toLowerCase() === form.adm.trim().toLowerCase());
     if (duplicate)
-      return alert(
-        `Admission number ${form.adm} is already registered to ${duplicate.studentName}.`,
-      );
+      return alert(`Admission number ${form.adm.trim()} is already registered to ${duplicate.studentName}. Use the Renew action to extend their card.`);
     const payload = {
       studentName: form.studentName,
       adm: form.adm,
@@ -4450,7 +4455,7 @@ export default function App({ superAdminMode = false }) {
                   <form onSubmit={handleLogPayment} className="space-y-4">
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        Student Name
+                        Student Name <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -4458,25 +4463,33 @@ export default function App({ superAdminMode = false }) {
                         value={form.studentName}
                         onChange={handleFormChange}
                         placeholder="e.g. Hezbon Jr."
+                        required
                         className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        Admission Number
+                        Admission Number <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
                         name="adm"
                         value={form.adm}
-                        onChange={handleFormChange}
+                        onChange={(e) => {
+                          // Only allow alphanumeric, hyphens and underscores
+                          const val = e.target.value.replace(/[^a-zA-Z0-9\-_]/g, "");
+                          setForm((p) => ({ ...p, adm: val }));
+                        }}
                         placeholder="e.g. 4501"
+                        required
+                        pattern="[a-zA-Z0-9\-_]+"
+                        title="Only letters, numbers, hyphens and underscores allowed"
                         className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        Class / Grade / Stream
+                        Class / Grade / Stream <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -4484,12 +4497,13 @@ export default function App({ superAdminMode = false }) {
                         value={form.grade}
                         onChange={handleFormChange}
                         placeholder="e.g. Form 2 North, Grade 5, Class 8"
+                        required
                         className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        Amount Paid (KSh)
+                        Amount Paid (KSh) <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="number"
@@ -4497,6 +4511,9 @@ export default function App({ superAdminMode = false }) {
                         value={form.amount}
                         onChange={handleFormChange}
                         placeholder="0.00"
+                        min="0"
+                        step="0.01"
+                        required
                         className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-bold"
                       />
                     </div>

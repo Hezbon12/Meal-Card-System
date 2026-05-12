@@ -370,20 +370,42 @@ app.get("/api/transactions", requireAuth, requireSubscription, noCache, (req, re
   });
 });
 
-app.post("/api/transactions", requireAuth, requireSubscription, body("studentName").notEmpty(), body("adm").notEmpty(), body("amount").isFloat(), validate, (req, res) => {
-  if (req.school.role !== "admin") return res.status(403).json({ error: "Forbidden" });
-  const { amount, durationWeeks, paidDate, dueDate, status, grade, cardType, pledgeAmount, paymentMode, mpesaRef } = req.body;
-  const studentName = stripHtml(req.body.studentName);
-  const adm = stripHtml(req.body.adm).trim();
-  const cardToken = generateToken();
-  db.run(
-    `INSERT INTO transactions (school_id,studentName,adm,grade,amount,durationWeeks,paidDate,dueDate,status,cardToken,cardType,pledgeAmount,paymentMode,mpesaRef) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[req.school.schoolId, encrypt(studentName), encrypt(adm), grade, amount, durationWeeks, paidDate, dueDate, status || "Active", cardToken, cardType || "standard", pledgeAmount, paymentMode || "Cash", mpesaRef],
-    function (err) {
-      if (err) return res.status(500).json({ error: "Failed to save" });
-      res.status(201).json({ id: this.lastID, studentName, adm, grade, amount, durationWeeks, paidDate, dueDate, status, cardToken, cardType, pledgeAmount, paymentMode, mpesaRef });
-    }
-  );
-});
+app.post("/api/transactions", requireAuth, requireSubscription,
+  body("studentName").trim().notEmpty().withMessage("Student name is required"),
+  body("adm").trim().notEmpty().withMessage("Admission number is required")
+    .matches(/^[a-zA-Z0-9\-_]+$/).withMessage("Admission number may only contain letters, numbers, hyphens and underscores"),
+  body("grade").trim().notEmpty().withMessage("Class / Grade / Stream is required"),
+  body("amount").isFloat({ min: 0 }).withMessage("Amount must be 0 or greater"),
+  validate,
+  (req, res) => {
+    if (req.school.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+    const { amount, durationWeeks, paidDate, dueDate, status, grade, cardType, pledgeAmount, paymentMode, mpesaRef } = req.body;
+    const studentName = stripHtml(req.body.studentName);
+    const adm = stripHtml(req.body.adm).trim();
+    const encryptedAdm = encrypt(adm);
+    const cardToken = generateToken();
+
+    // Check for duplicate ADM within this school
+    db.get(`SELECT id, studentName FROM transactions WHERE adm=? AND school_id=? AND status != 'Archived'`,
+      [encryptedAdm, req.school.schoolId],
+      (err, existing) => {
+        if (existing) {
+          return res.status(409).json({
+            error: `Admission number ${adm} is already registered. Use the Renew action to extend their card.`
+          });
+        }
+        db.run(
+          `INSERT INTO transactions (school_id,studentName,adm,grade,amount,durationWeeks,paidDate,dueDate,status,cardToken,cardType,pledgeAmount,paymentMode,mpesaRef) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [req.school.schoolId, encrypt(studentName), encryptedAdm, grade, amount, durationWeeks, paidDate, dueDate, status || "Active", cardToken, cardType || "standard", pledgeAmount, paymentMode || "Cash", mpesaRef],
+          function (err) {
+            if (err) return res.status(500).json({ error: "Failed to save" });
+            res.status(201).json({ id: this.lastID, studentName, adm, grade, amount: parseFloat(amount), durationWeeks, paidDate, dueDate, status: status || "Active", cardToken, cardType: cardType || "standard", pledgeAmount, paymentMode: paymentMode || "Cash", mpesaRef });
+          }
+        );
+      }
+    );
+  }
+);
 
 // ─── ADMIN: Bulk Import Students from CSV ─────────────────────
 app.post("/api/transactions/bulk", requireAuth, requireSubscription, (req, res) => {
