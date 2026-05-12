@@ -490,6 +490,17 @@ app.post("/api/transactions/:id/restore", requireAuth, requireSubscription, (req
   db.run(`UPDATE transactions SET status='Active' WHERE id=? AND school_id=? AND status='Archived'`, [req.params.id, req.school.schoolId], () => res.json({ success: true }));
 });
 
+// Permanently delete an archived record (irreversible)
+app.delete("/api/transactions/:id/permanent", requireAuth, requireSubscription, (req, res) => {
+  if (req.school.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+  db.run(`DELETE FROM transactions WHERE id=? AND school_id=? AND status='Archived'`, [req.params.id, req.school.schoolId], function(err) {
+    if (err) return res.status(500).json({ error: "Delete failed" });
+    if (this.changes === 0) return res.status(404).json({ error: "Record not found or not archived" });
+    logAudit("TRANSACTION_PERMANENTLY_DELETED", String(req.params.id), "Permanently deleted archived record", req);
+    res.json({ success: true });
+  });
+});
+
 app.post("/api/transactions/:id/replace", requireAuth, requireSubscription, (req, res) => {
   const newToken = generateToken();
   db.run(`UPDATE transactions SET cardToken=? WHERE id=? AND school_id=?`, [newToken, req.params.id, req.school.schoolId], () => {
