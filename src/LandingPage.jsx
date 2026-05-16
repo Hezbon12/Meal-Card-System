@@ -267,7 +267,7 @@ function Pricing() {
   const plans = [
     {
       name: 'Basic',
-      price: 'KSh 5,000',
+      price: 'KSh 10,000',
       period: '/term',
       desc: 'Perfect for small primary schools',
       students: 'Up to 200 students',
@@ -277,7 +277,7 @@ function Pricing() {
     },
     {
       name: 'Standard',
-      price: 'KSh 7,500',
+      price: 'KSh 15,000',
       period: '/term',
       desc: 'For growing schools',
       students: 'Up to 600 students',
@@ -288,7 +288,7 @@ function Pricing() {
     },
     {
       name: 'Premium',
-      price: 'KSh 10,000',
+      price: 'KSh 20,000',
       period: '/term',
       desc: 'For large institutions',
       students: 'Unlimited students',
