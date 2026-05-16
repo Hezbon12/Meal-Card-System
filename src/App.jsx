@@ -1,4 +1,4 @@
-﻿import Papa from "papaparse";
+import Papa from "papaparse";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -360,8 +360,9 @@ function SuperAdminPanel({ onBack }) {
   const tokenRef = useRef(null);
   const [error, setError] = useState("");
   const [schools, setSchools] = useState([]);
+  const [archivedSchools, setArchivedSchools] = useState([]);
   const [signups, setSignups] = useState([]);
-  const [activeSection, setActiveSection] = useState("schools"); // 'schools' | 'signups'
+  const [activeSection, setActiveSection] = useState("schools"); // 'schools' | 'signups' | 'archived'
   const [form, setForm] = useState({
     name: "",
     username: "",
@@ -394,6 +395,7 @@ function SuperAdminPanel({ onBack }) {
     setToken(data.token);
     loadSchools(data.token);
     loadSignups(data.token);
+    loadArchivedSchools(data.token);
   };
 
   const saApi = (path, opts = {}) =>
@@ -431,6 +433,18 @@ function SuperAdminPanel({ onBack }) {
       .catch(() => {});
   };
 
+  const loadArchivedSchools = (t) => {
+    const tok = t || tokenRef.current;
+    fetch("/api/superadmin/schools/archived", {
+      headers: { Authorization: `Bearer ${tok}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) setArchivedSchools(data);
+      })
+      .catch(() => {});
+  };
+
   const createSchool = async (e) => {
     e.preventDefault();
     const res = await saApi("/api/superadmin/schools", {
@@ -451,6 +465,7 @@ function SuperAdminPanel({ onBack }) {
       accountantPassword: "",
     });
     loadSchools();
+    loadSignups(); // Refresh signups to remove the created school's request
   };
 
   const saveEdit = async (id) => {
@@ -481,13 +496,28 @@ function SuperAdminPanel({ onBack }) {
   const deleteSchool = async (id, name) => {
     if (
       !window.confirm(
-        `Delete "${name}" and ALL its data? This cannot be undone.`,
+        `Archive "${name}"? The school will be moved to the Archived Schools section. All data is preserved and can be restored.`,
       )
     )
       return;
     await saApi(`/api/superadmin/schools/${id}`, { method: "DELETE" });
-    setMsg(`"${name}" deleted.`);
+    setMsg(`"${name}" archived successfully.`);
     loadSchools();
+    loadArchivedSchools();
+  };
+
+  const restoreSchool = async (id, name) => {
+    if (!window.confirm(`Restore "${name}" back to active schools?`)) return;
+    const res = await saApi(`/api/superadmin/schools/${id}/restore`, {
+      method: "POST",
+    });
+    if (res.ok) {
+      setMsg(`"${name}" restored successfully.`);
+      loadSchools();
+      loadArchivedSchools();
+    } else {
+      setMsg("Error: Restore failed.");
+    }
   };
 
   const deleteSignup = async (id, schoolName) => {
@@ -573,6 +603,10 @@ function SuperAdminPanel({ onBack }) {
             [
               "signups",
               `Sign-up Requests ${signups.length > 0 ? `(${signups.length})` : ""}`,
+            ],
+            [
+              "archived",
+              `Archived Schools ${archivedSchools.length > 0 ? `(${archivedSchools.length})` : ""}`,
             ],
           ].map(([key, label]) => (
             <button
@@ -864,7 +898,7 @@ function SuperAdminPanel({ onBack }) {
                                 <button
                                   onClick={() => deleteSchool(s.id, s.name)}
                                   className="p-1.5 text-red-500 bg-red-50 hover:bg-red-100 rounded-lg"
-                                  title="Delete"
+                                  title="Archive school"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -959,6 +993,77 @@ function SuperAdminPanel({ onBack }) {
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Archived Schools */}
+        {activeSection === "archived" && (
+          <div className="bg-white rounded-xl shadow-sm border border-red-100 overflow-hidden">
+            <div className="p-5 border-b border-red-100 bg-red-50">
+              <h2 className="font-bold text-red-800 flex items-center gap-2">
+                <Trash2 className="w-5 h-5 text-red-500" /> Archived Schools (
+                {archivedSchools.length})
+              </h2>
+              <p className="text-xs text-red-500 mt-0.5">
+                Schools that have been archived. All data is preserved and can be restored.
+              </p>
+            </div>
+            {archivedSchools.length === 0 ? (
+              <p className="p-8 text-center text-gray-400">
+                No archived schools.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
+                      <th className="py-3 px-4 font-semibold">School</th>
+                      <th className="py-3 px-4 font-semibold">Username</th>
+                      <th className="py-3 px-4 font-semibold">Plan</th>
+                      <th className="py-3 px-4 font-semibold">Created</th>
+                      <th className="py-3 px-4 font-semibold text-center">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {archivedSchools.map((s) => (
+                      <tr
+                        key={s.id}
+                        className="border-b border-gray-100 hover:bg-red-50/30 transition"
+                      >
+                        <td className="py-3 px-4 font-bold text-gray-700">
+                          {s.name}
+                        </td>
+                        <td className="py-3 px-4 text-gray-500 font-mono text-sm">
+                          {s.username}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`px-2 py-0.5 rounded text-xs font-bold ${PLAN_COLORS[s.plan] || "bg-gray-100 text-gray-600"}`}
+                          >
+                            {PLAN_LABELS[s.plan] || s.plan}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-gray-400 text-xs">
+                          {s.createdat?.slice?.(0, 10) || s.createdAt?.slice?.(0, 10) || "—"}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <button
+                            onClick={() => restoreSchool(s.id, s.name)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition"
+                            title="Restore to active schools"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />{" "}
+                            Restore
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -3937,6 +4042,35 @@ export default function App({ superAdminMode = false }) {
     fetchTransactions();
   };
 
+  const handlePermanentDelete = async (tx) => {
+    if (
+      !window.confirm(
+        `⚠️ PERMANENT DELETE\n\nAre you sure you want to permanently delete the record for "${tx.studentName}" (ADM: ${tx.adm})?\n\nThis action CANNOT be undone. The data will be lost forever.`
+      )
+    )
+      return;
+    if (
+      !window.confirm(
+        `FINAL CONFIRMATION\n\nYou are about to permanently delete:\n• ${tx.studentName}\n• ADM: ${tx.adm}\n• Amount: KSh ${tx.amount?.toLocaleString()}\n\nClick OK to delete forever.`
+      )
+    )
+      return;
+    try {
+      const res = await api(`/api/transactions/${tx.id}/permanent`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setArchivedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
+        alert(`Record for ${tx.studentName} has been permanently deleted.`);
+      } else {
+        const data = await res.json();
+        alert("Delete failed: " + (data.error || "Unknown error"));
+      }
+    } catch {
+      alert("Failed to reach server.");
+    }
+  };
+
   const handleReplaceCard = async (tx) => {
     if (
       !window.confirm(
@@ -4584,87 +4718,125 @@ export default function App({ superAdminMode = false }) {
                       <CheckCircle2 className="w-5 h-5" />
                       <span>Log & Database Sync</span>
                     </button>
-                    <div className="mb-6 p-4 bg-indigo-50 border border-indigo-100 rounded-lg">
-                      <h3 className="text-sm font-bold text-indigo-800 mb-2">
-                        Bulk Upload (CSV)
-                      </h3>
-                      <p className="text-xs text-indigo-600 mb-3">
-                        Upload an Excel CSV file. Columns must be named exactly:{" "}
-                        <strong>
-                          Student Name, Admission Number, Grade, Amount,
-                          Duration Weeks
-                        </strong>
-                        .
-                      </p>
+                  </form>
+                  <div className="mt-4 p-4 bg-indigo-50 border border-indigo-100 rounded-lg">
+                    <h3 className="text-sm font-bold text-indigo-800 mb-2">
+                      Bulk Upload (CSV)
+                    </h3>
+                    <p className="text-xs text-indigo-600 mb-3">
+                      Upload an Excel CSV file. Columns must be named exactly:{" "}
+                      <strong>
+                        Student Name, Admission Number, Grade, Amount,
+                        Duration Weeks
+                      </strong>
+                      .
+                    </p>
 
-                      <label className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg cursor-pointer transition">
-                        <PlusCircle className="w-4 h-4" />
-                        <span>Select CSV File</span>
-                        <input
-                          type="file"
-                          accept=".csv"
-                          className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files[0];
-                            if (!file) return;
+                    <label className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg cursor-pointer transition">
+                      <PlusCircle className="w-4 h-4" />
+                      <span>Select CSV File</span>
+                      <input
+                        type="file"
+                        accept=".csv"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files[0];
+                          if (!file) return;
 
-                            Papa.parse(file, {
-                              header: true,
-                              skipEmptyLines: true,
-                              complete: async (results) => {
-                                const parsedStudents = results.data.map(
-                                  (row) => ({
-                                    studentName: row["Student Name"],
-                                    adm: row["Admission Number"],
-                                    grade: row["Grade"] || "",
-                                    amount: row["Amount"] || 0,
-                                    durationWeeks: row["Duration Weeks"] || 12,
-                                  }),
+                          Papa.parse(file, {
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: async (results) => {
+                              const parsedStudents = results.data
+                                .map((row) => ({
+                                  studentName: (row["Student Name"] || "").trim(),
+                                  adm: (row["Admission Number"] || "").trim(),
+                                  grade: (row["Grade"] || "").trim(),
+                                  amount: row["Amount"] || 0,
+                                  durationWeeks: row["Duration Weeks"] || 12,
+                                }))
+                                .filter((s) => s.studentName && s.adm);
+
+                              if (parsedStudents.length === 0) {
+                                alert("No valid students found in the CSV file. Make sure columns are named: Student Name, Admission Number, Grade, Amount, Duration Weeks");
+                                return;
+                              }
+
+                              // Filter out students whose ADM already exists in the database
+                              const existingAdms = new Set(
+                                transactions.map((tx) => String(tx.adm).trim().toLowerCase())
+                              );
+                              const newStudents = [];
+                              const duplicateStudents = [];
+                              for (const s of parsedStudents) {
+                                if (existingAdms.has(String(s.adm).trim().toLowerCase())) {
+                                  duplicateStudents.push(s);
+                                } else {
+                                  newStudents.push(s);
+                                }
+                              }
+
+                              if (newStudents.length === 0) {
+                                alert(
+                                  `All ${parsedStudents.length} student(s) in the CSV already exist in the database. No new records to add.` +
+                                  (duplicateStudents.length > 0
+                                    ? `\n\nDuplicate ADMs: ${duplicateStudents.map((s) => s.adm).join(", ")}`
+                                    : "")
+                                );
+                                return;
+                              }
+
+                              const duplicateMsg = duplicateStudents.length > 0
+                                ? `\n\n⚠ ${duplicateStudents.length} duplicate(s) will be skipped (already in database):\n${duplicateStudents.map((s) => `  • ${s.adm} - ${s.studentName}`).join("\n")}`
+                                : "";
+
+                              if (
+                                !window.confirm(
+                                  `Found ${parsedStudents.length} student(s) in CSV.\n\n✅ ${newStudents.length} new student(s) will be added.${duplicateMsg}\n\nProceed with upload?`
+                                )
+                              )
+                                return;
+
+                              try {
+                                const token =
+                                  localStorage.getItem("shulemeal_token");
+                                const res = await fetch(
+                                  "/api/transactions/bulk",
+                                  {
+                                    method: "POST",
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                      Authorization: `Bearer ${token}`,
+                                    },
+                                    body: JSON.stringify({
+                                      students: newStudents,
+                                    }),
+                                  },
                                 );
 
-                                if (
-                                  !window.confirm(
-                                    `Found ${parsedStudents.length} students. Upload them now?`,
-                                  )
-                                )
-                                  return;
-
-                                try {
-                                  const token =
-                                    localStorage.getItem("shulemeal_token");
-                                  const res = await fetch(
-                                    "/api/transactions/bulk",
-                                    {
-                                      method: "POST",
-                                      headers: {
-                                        "Content-Type": "application/json",
-                                        Authorization: `Bearer ${token}`,
-                                      },
-                                      body: JSON.stringify({
-                                        students: parsedStudents,
-                                      }),
-                                    },
+                                const data = await res.json();
+                                if (res.ok) {
+                                  alert(
+                                    `Success! Added ${data.added} student(s).` +
+                                    (data.skipped > 0 ? ` Skipped ${data.skipped} duplicate(s).` : "") +
+                                    (duplicateStudents.length > 0 ? `\n${duplicateStudents.length} were already in the database.` : ""),
                                   );
-
-                                  const data = await res.json();
-                                  if (res.ok) {
-                                    alert(
-                                      `Success! Added ${data.added} students. Skipped ${data.skipped} duplicates.`,
-                                    );
-                                    window.location.reload(); // Refresh to see the new data
-                                  } else {
-                                    alert("Error: " + data.error);
-                                  }
-                                } catch (err) {
-                                  alert("Failed to reach server.");
+                                  window.location.reload();
+                                } else {
+                                  alert("Error: " + data.error);
                                 }
-                              },
-                            });
-                          }}
-                        />
-                      </label>
-                    </div>
-                  </form>
+                              } catch (err) {
+                                alert("Failed to reach server.");
+                              }
+                            },
+                          });
+
+                          // Reset input so same file can be re-selected
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -4992,7 +5164,7 @@ export default function App({ superAdminMode = false }) {
                                 Due Date
                               </th>
                               <th className="py-3 px-5 font-semibold text-center">
-                                Restore
+                                Actions
                               </th>
                             </tr>
                           </thead>
@@ -5026,14 +5198,24 @@ export default function App({ superAdminMode = false }) {
                                   {tx.dueDate}
                                 </td>
                                 <td className="py-3 px-5 text-center">
-                                  <button
-                                    onClick={() => handleRestore(tx.id)}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition"
-                                    title="Restore to active dashboard"
-                                  >
-                                    <CheckCircle2 className="w-3.5 h-3.5" />{" "}
-                                    Restore
-                                  </button>
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button
+                                      onClick={() => handleRestore(tx.id)}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition"
+                                      title="Restore to active dashboard"
+                                    >
+                                      <CheckCircle2 className="w-3.5 h-3.5" />{" "}
+                                      Restore
+                                    </button>
+                                    <button
+                                      onClick={() => handlePermanentDelete(tx)}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition"
+                                      title="Permanently delete — cannot be undone"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />{" "}
+                                      Delete Forever
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))}

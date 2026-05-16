@@ -212,7 +212,8 @@ function normalizeTx(row) {
 const initSchema = async () => {
   try {
     const tables =[
-      `CREATE TABLE IF NOT EXISTS schools (id SERIAL PRIMARY KEY, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, adminPasswordHash TEXT NOT NULL, teacherPasswordHash TEXT NOT NULL, accountantPasswordHash TEXT, plan TEXT DEFAULT 'trial', subscriptionExpiry TEXT DEFAULT NULL, gracePeriodDays INTEGER DEFAULT 7, trialEndsAt TEXT DEFAULT NULL, createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP, passwordChangedAt TIMESTAMP DEFAULT NULL)`,
+      `CREATE TABLE IF NOT EXISTS schools (id SERIAL PRIMARY KEY, name TEXT NOT NULL, username TEXT UNIQUE NOT NULL, adminPasswordHash TEXT NOT NULL, teacherPasswordHash TEXT NOT NULL, accountantPasswordHash TEXT, plan TEXT DEFAULT 'trial', subscriptionExpiry TEXT DEFAULT NULL, gracePeriodDays INTEGER DEFAULT 7, trialEndsAt TEXT DEFAULT NULL, createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP, passwordChangedAt TIMESTAMP DEFAULT NULL, status TEXT DEFAULT 'Active')`,
+
       `CREATE TABLE IF NOT EXISTS transactions (id SERIAL PRIMARY KEY, school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE, studentName TEXT NOT NULL, adm TEXT NOT NULL, grade TEXT, amount REAL NOT NULL, durationWeeks INTEGER, paidDate TEXT, dueDate TEXT NOT NULL, status TEXT DEFAULT 'Active', cardToken TEXT, cardType TEXT DEFAULT 'standard', pledgeAmount REAL, paymentMode TEXT DEFAULT 'Cash', mpesaRef TEXT, refundReason TEXT)`,
       `CREATE TABLE IF NOT EXISTS scans (id SERIAL PRIMARY KEY, school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE, adm TEXT, scanDate TEXT, mealDate TEXT, mealType TEXT DEFAULT 'lunch', status TEXT)`,
       `CREATE TABLE IF NOT EXISTS audit_log (id SERIAL PRIMARY KEY, action TEXT NOT NULL, target TEXT, detail TEXT, ipAddress TEXT, userAgent TEXT, userId TEXT, performedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
@@ -251,6 +252,11 @@ const initSchema = async () => {
         await pool.query(`UPDATE transactions SET cardToken = $1 WHERE id = $2`, [generateToken(), row.id]);
       }
     }
+    // Add status column to schools if missing (migration for existing databases)
+    try {
+      await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active'`);
+    } catch (e) { /* column may already exist */ }
+
     console.log("✅ Database schema initialized successfully!");
   } catch (err) {
     console.error("❌ Schema Init Error:", err.message);
@@ -796,9 +802,24 @@ app.post("/api/superadmin/login", body("password").notEmpty(), validate, (req, r
 });
 
 app.get("/api/superadmin/schools", requireSuperAdmin, noCache, (req, res) => {
-  db.all(`SELECT id, name, username, plan, subscriptionExpiry, gracePeriodDays, trialEndsAt, createdAt FROM schools ORDER BY id DESC`, [], (err, rows) => {
+  db.all(`SELECT id, name, username, plan, subscriptionExpiry, gracePeriodDays, trialEndsAt, createdAt, status FROM schools WHERE status != 'Archived' OR status IS NULL ORDER BY id DESC`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json((rows || []).map(s => ({ ...s, subscription: getSubscriptionState(s) })));
+  });
+});
+
+app.get("/api/superadmin/schools/archived", requireSuperAdmin, noCache, (req, res) => {
+  db.all(`SELECT id, name, username, plan, subscriptionExpiry, gracePeriodDays, trialEndsAt, createdAt, status FROM schools WHERE status = 'Archived' ORDER BY id DESC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json((rows || []).map(s => ({ ...s, subscription: getSubscriptionState(s) })));
+  });
+});
+
+app.post("/api/superadmin/schools/:id/restore", requireSuperAdmin, (req, res) => {
+  db.run(`UPDATE schools SET status='Active' WHERE id=? AND status='Archived'`, [req.params.id], function(err) {
+    if (err) return res.status(500).json({ error: "Restore failed" });
+    if (this.changes === 0) return res.status(404).json({ error: "School not found or not archived" });
+    res.json({ success: true });
   });
 });
 
@@ -811,10 +832,12 @@ app.post("/api/superadmin/schools", requireSuperAdmin, body("name").trim().notEm
       accountantPassword ? bcrypt.hash(accountantPassword, 12) : Promise.resolve(null),
     ]);
     const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-    db.run(`INSERT INTO schools (name, username, adminPasswordHash, teacherPasswordHash, accountantPasswordHash, plan, trialEndsAt) VALUES (?,?,?,?,?,?,?)`,
-      [name.trim(), username.trim().toLowerCase(), adminHash, teacherHash, accountantHash, "trial", trialEndsAt],
+    db.run(`INSERT INTO schools (name, username, adminPasswordHash, teacherPasswordHash, accountantPasswordHash, plan, trialEndsAt, status) VALUES (?,?,?,?,?,?,?,?)`,
+      [name.trim(), username.trim().toLowerCase(), adminHash, teacherHash, accountantHash, "trial", trialEndsAt, "Active"],
       function(err) {
         if (err) return res.status(400).json({ error: err.message?.includes("unique") || err.message?.includes("UNIQUE") ? "Username already taken" : err.message });
+        // Auto-remove matching signup requests by school name (case-insensitive)
+        db.run(`DELETE FROM signups WHERE LOWER("schoolName") = LOWER(?)`, [name.trim()]);
         res.status(201).json({ id: this.lastID, name, username });
       }
     );
@@ -854,8 +877,9 @@ app.put("/api/superadmin/schools/:id", requireSuperAdmin, async (req, res) => {
 });
 
 app.delete("/api/superadmin/schools/:id", requireSuperAdmin, (req, res) => {
-  db.run(`DELETE FROM schools WHERE id=?`, [req.params.id], (err) => {
-    if (err) return res.status(500).json({ error: "Delete failed" });
+  db.run(`UPDATE schools SET status='Archived' WHERE id=?`, [req.params.id], function(err) {
+    if (err) return res.status(500).json({ error: "Archive failed" });
+    if (this.changes === 0) return res.status(404).json({ error: "School not found" });
     res.json({ success: true });
   });
 });
@@ -890,7 +914,8 @@ app.get("/api/superadmin/audit", requireSuperAdmin, (req, res) => {
 });
 
 app.get("/api/superadmin/signups", requireSuperAdmin, (req, res) => {
-  db.all(`SELECT id, schoolname AS "schoolName", name, phone, email, plan, message, createdat AS "createdAt" FROM signups ORDER BY id DESC`, [], (err, rows) => res.json(rows || []));
+  // Exclude signups whose school name already matches a registered school
+  db.all(`SELECT s.id, s.schoolname AS "schoolName", s.name, s.phone, s.email, s.plan, s.message, s.createdat AS "createdAt" FROM signups s WHERE NOT EXISTS (SELECT 1 FROM schools sc WHERE LOWER(sc.name) = LOWER(s.schoolname) AND (sc.status != 'Archived' OR sc.status IS NULL)) ORDER BY s.id DESC`, [], (err, rows) => res.json(rows || []));
 });
 
 app.delete("/api/superadmin/signups/:id", requireSuperAdmin, (req, res) => {
