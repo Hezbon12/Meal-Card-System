@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://shulemeal.co.ke/sitemap.xml
