@@ -1012,7 +1012,8 @@ function SuperAdminPanel({ onBack }) {
                 {archivedSchools.length})
               </h2>
               <p className="text-xs text-red-500 mt-0.5">
-                Schools that have been archived. All data is preserved and can be restored.
+                Schools that have been archived. All data is preserved and can
+                be restored.
               </p>
             </div>
             {archivedSchools.length === 0 ? (
@@ -1053,7 +1054,9 @@ function SuperAdminPanel({ onBack }) {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-gray-400 text-xs">
-                          {s.createdat?.slice?.(0, 10) || s.createdAt?.slice?.(0, 10) || "—"}
+                          {s.createdat?.slice?.(0, 10) ||
+                            s.createdAt?.slice?.(0, 10) ||
+                            "—"}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <button
@@ -1061,8 +1064,7 @@ function SuperAdminPanel({ onBack }) {
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition"
                             title="Restore to active schools"
                           >
-                            <CheckCircle2 className="w-3.5 h-3.5" />{" "}
-                            Restore
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Restore
                           </button>
                         </td>
                       </tr>
@@ -3915,6 +3917,17 @@ export default function App({ superAdminMode = false }) {
   const [specialTx, setSpecialTx] = useState(null);
   const [specialForm, setSpecialForm] = useState({ durationWeeks: "4" });
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [adminSearch, setAdminSearch] = useState("");
+
+  // This filters the table based on what you type into the search bar
+  const filteredAdminTransactions =
+    adminSearch.trim() === ""
+      ? transactions
+      : transactions.filter(
+          (tx) =>
+            tx.studentName.toLowerCase().includes(adminSearch.toLowerCase()) ||
+            tx.adm.toLowerCase().includes(adminSearch.toLowerCase()),
+        );
 
   // Super admin panel via hash
   useEffect(() => {
@@ -4045,13 +4058,13 @@ export default function App({ superAdminMode = false }) {
   const handlePermanentDelete = async (tx) => {
     if (
       !window.confirm(
-        `⚠️ PERMANENT DELETE\n\nAre you sure you want to permanently delete the record for "${tx.studentName}" (ADM: ${tx.adm})?\n\nThis action CANNOT be undone. The data will be lost forever.`
+        `⚠️ PERMANENT DELETE\n\nAre you sure you want to permanently delete the record for "${tx.studentName}" (ADM: ${tx.adm})?\n\nThis action CANNOT be undone. The data will be lost forever.`,
       )
     )
       return;
     if (
       !window.confirm(
-        `FINAL CONFIRMATION\n\nYou are about to permanently delete:\n• ${tx.studentName}\n• ADM: ${tx.adm}\n• Amount: KSh ${tx.amount?.toLocaleString()}\n\nClick OK to delete forever.`
+        `FINAL CONFIRMATION\n\nYou are about to permanently delete:\n• ${tx.studentName}\n• ADM: ${tx.adm}\n• Amount: KSh ${tx.amount?.toLocaleString()}\n\nClick OK to delete forever.`,
       )
     )
       return;
@@ -4174,19 +4187,31 @@ export default function App({ superAdminMode = false }) {
     if (!form.studentName.trim()) return alert("Student Name is required.");
     if (!form.adm.trim()) return alert("Admission Number is required.");
     if (!form.grade.trim()) return alert("Class / Grade / Stream is required.");
-    if (form.amount === "" || form.amount === null) return alert("Amount Paid is required.");
+    if (form.amount === "" || form.amount === null)
+      return alert("Amount Paid is required.");
     // ADM format: only alphanumeric, hyphens, underscores
-    if (!/^[a-zA-Z0-9\-_]+$/.test(form.adm.trim())) return alert("Admission Number may only contain letters, numbers, hyphens and underscores.");
+    if (!/^[a-zA-Z0-9\-_]+$/.test(form.adm.trim()))
+      return alert(
+        "Admission Number may only contain letters, numbers, hyphens and underscores.",
+      );
     // Amount must be 0 or positive
     const amount = parseFloat(form.amount);
-    if (isNaN(amount) || amount < 0) return alert("Amount Paid cannot be negative.");
+    if (isNaN(amount) || amount < 0)
+      return alert("Amount Paid cannot be negative.");
     // Duration check
-    if (form.durationType === "days" && (!form.durationDays || parseInt(form.durationDays) < 1))
+    if (
+      form.durationType === "days" &&
+      (!form.durationDays || parseInt(form.durationDays) < 1)
+    )
       return alert("Please enter a valid number of days (minimum 1).");
     // Duplicate ADM check (case-insensitive)
-    const duplicate = transactions.find((tx) => tx.adm.toLowerCase() === form.adm.trim().toLowerCase());
+    const duplicate = transactions.find(
+      (tx) => tx.adm.toLowerCase() === form.adm.trim().toLowerCase(),
+    );
     if (duplicate)
-      return alert(`Admission number ${form.adm.trim()} is already registered to ${duplicate.studentName}. Use the Renew action to extend their card.`);
+      return alert(
+        `Admission number ${form.adm.trim()} is already registered to ${duplicate.studentName}. Use the Renew action to extend their card.`,
+      );
     const payload = {
       studentName: form.studentName,
       adm: form.adm,
@@ -4611,7 +4636,10 @@ export default function App({ superAdminMode = false }) {
                         value={form.adm}
                         onChange={(e) => {
                           // Only allow alphanumeric, hyphens and underscores
-                          const val = e.target.value.replace(/[^a-zA-Z0-9\-_]/g, "");
+                          const val = e.target.value.replace(
+                            /[^a-zA-Z0-9\-_]/g,
+                            "",
+                          );
                           setForm((p) => ({ ...p, adm: val }));
                         }}
                         placeholder="e.g. 4501"
@@ -4623,7 +4651,8 @@ export default function App({ superAdminMode = false }) {
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        Class / Grade / Stream <span className="text-red-500">*</span>
+                        Class / Grade / Stream{" "}
+                        <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -4637,7 +4666,8 @@ export default function App({ superAdminMode = false }) {
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">
-                        Amount Paid (KSh) <span className="text-red-500">*</span>
+                        Amount Paid (KSh){" "}
+                        <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="number"
@@ -4726,8 +4756,8 @@ export default function App({ superAdminMode = false }) {
                     <p className="text-xs text-indigo-600 mb-3">
                       Upload an Excel CSV file. Columns must be named exactly:{" "}
                       <strong>
-                        Student Name, Admission Number, Grade, Amount,
-                        Duration Weeks
+                        Student Name, Admission Number, Grade, Amount, Duration
+                        Weeks
                       </strong>
                       .
                     </p>
@@ -4749,7 +4779,9 @@ export default function App({ superAdminMode = false }) {
                             complete: async (results) => {
                               const parsedStudents = results.data
                                 .map((row) => ({
-                                  studentName: (row["Student Name"] || "").trim(),
+                                  studentName: (
+                                    row["Student Name"] || ""
+                                  ).trim(),
                                   adm: (row["Admission Number"] || "").trim(),
                                   grade: (row["Grade"] || "").trim(),
                                   amount: row["Amount"] || 0,
@@ -4758,18 +4790,26 @@ export default function App({ superAdminMode = false }) {
                                 .filter((s) => s.studentName && s.adm);
 
                               if (parsedStudents.length === 0) {
-                                alert("No valid students found in the CSV file. Make sure columns are named: Student Name, Admission Number, Grade, Amount, Duration Weeks");
+                                alert(
+                                  "No valid students found in the CSV file. Make sure columns are named: Student Name, Admission Number, Grade, Amount, Duration Weeks",
+                                );
                                 return;
                               }
 
                               // Filter out students whose ADM already exists in the database
                               const existingAdms = new Set(
-                                transactions.map((tx) => String(tx.adm).trim().toLowerCase())
+                                transactions.map((tx) =>
+                                  String(tx.adm).trim().toLowerCase(),
+                                ),
                               );
                               const newStudents = [];
                               const duplicateStudents = [];
                               for (const s of parsedStudents) {
-                                if (existingAdms.has(String(s.adm).trim().toLowerCase())) {
+                                if (
+                                  existingAdms.has(
+                                    String(s.adm).trim().toLowerCase(),
+                                  )
+                                ) {
                                   duplicateStudents.push(s);
                                 } else {
                                   newStudents.push(s);
@@ -4779,20 +4819,21 @@ export default function App({ superAdminMode = false }) {
                               if (newStudents.length === 0) {
                                 alert(
                                   `All ${parsedStudents.length} student(s) in the CSV already exist in the database. No new records to add.` +
-                                  (duplicateStudents.length > 0
-                                    ? `\n\nDuplicate ADMs: ${duplicateStudents.map((s) => s.adm).join(", ")}`
-                                    : "")
+                                    (duplicateStudents.length > 0
+                                      ? `\n\nDuplicate ADMs: ${duplicateStudents.map((s) => s.adm).join(", ")}`
+                                      : ""),
                                 );
                                 return;
                               }
 
-                              const duplicateMsg = duplicateStudents.length > 0
-                                ? `\n\n⚠ ${duplicateStudents.length} duplicate(s) will be skipped (already in database):\n${duplicateStudents.map((s) => `  • ${s.adm} - ${s.studentName}`).join("\n")}`
-                                : "";
+                              const duplicateMsg =
+                                duplicateStudents.length > 0
+                                  ? `\n\n⚠ ${duplicateStudents.length} duplicate(s) will be skipped (already in database):\n${duplicateStudents.map((s) => `  • ${s.adm} - ${s.studentName}`).join("\n")}`
+                                  : "";
 
                               if (
                                 !window.confirm(
-                                  `Found ${parsedStudents.length} student(s) in CSV.\n\n✅ ${newStudents.length} new student(s) will be added.${duplicateMsg}\n\nProceed with upload?`
+                                  `Found ${parsedStudents.length} student(s) in CSV.\n\n✅ ${newStudents.length} new student(s) will be added.${duplicateMsg}\n\nProceed with upload?`,
                                 )
                               )
                                 return;
@@ -4818,8 +4859,12 @@ export default function App({ superAdminMode = false }) {
                                 if (res.ok) {
                                   alert(
                                     `Success! Added ${data.added} student(s).` +
-                                    (data.skipped > 0 ? ` Skipped ${data.skipped} duplicate(s).` : "") +
-                                    (duplicateStudents.length > 0 ? `\n${duplicateStudents.length} were already in the database.` : ""),
+                                      (data.skipped > 0
+                                        ? ` Skipped ${data.skipped} duplicate(s).`
+                                        : "") +
+                                      (duplicateStudents.length > 0
+                                        ? `\n${duplicateStudents.length} were already in the database.`
+                                        : ""),
                                   );
                                   window.location.reload();
                                 } else {
@@ -4895,12 +4940,24 @@ export default function App({ superAdminMode = false }) {
                 </div>
 
                 <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex-1 overflow-hidden flex flex-col">
-                  <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+                  <div className="p-6 border-b border-gray-100 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
                     <h2 className="text-xl font-bold text-gray-800 flex items-center">
                       <FileText className="w-5 h-5 mr-2 text-indigo-500" />{" "}
                       Database Records
                     </h2>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* ─── NEW SEARCH BAR ─── */}
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                          type="text"
+                          value={adminSearch}
+                          onChange={(e) => setAdminSearch(e.target.value)}
+                          placeholder="Search Name or ADM..."
+                          className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-full sm:w-56"
+                        />
+                      </div>
+
                       {selectedIds.size > 0 && (
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-lg">
@@ -4963,7 +5020,7 @@ export default function App({ superAdminMode = false }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {transactions.map((tx) => (
+                        {filteredAdminTransactions.map((tx) => (
                           <tr
                             key={tx.id}
                             className={`border-b border-gray-100 hover:bg-gray-50 transition ${selectedIds.has(tx.id) ? "bg-indigo-50/60" : ""}`}
@@ -5096,13 +5153,15 @@ export default function App({ superAdminMode = false }) {
                             </td>
                           </tr>
                         ))}
-                        {transactions.length === 0 && (
+                        {filteredAdminTransactions.length === 0 && (
                           <tr>
                             <td
-                              colSpan="5"
+                              colSpan="7"
                               className="py-8 text-center text-gray-500"
                             >
-                              No records found in database.
+                              {transactions.length === 0
+                                ? "No records found in database."
+                                : "No students match your search."}
                             </td>
                           </tr>
                         )}
@@ -5212,8 +5271,8 @@ export default function App({ superAdminMode = false }) {
                                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition"
                                       title="Permanently delete — cannot be undone"
                                     >
-                                      <Trash2 className="w-3.5 h-3.5" />{" "}
-                                      Delete Forever
+                                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                                      Forever
                                     </button>
                                   </div>
                                 </td>
